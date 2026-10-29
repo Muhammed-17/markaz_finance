@@ -120,9 +120,9 @@ service cloud.firestore {
 
     // ================= المستخدمون =================
     // القراءة: المستخدم مستنده فقط، والمدير الجميع.
-    // الإنشاء والتعديل لصاحب صلاحية approve — إنشاء الحساب المصادق يحدث عبر
-    // نسخة Firebase ثانوية من التطبيق ثم يُكتب هذا المستند. لا حذف إطلاقًا
-    // (التعطيل فقط عبر isActive)، ولا تعديل ذاتي للحقول الحساسة.
+    // الإنشاء: صاحب approve ينشئ مستخدمين بدور user فقط — إنشاء admin للمدير حصرًا.
+    // التعديل: تغيير role إلى admin للمدير حصرًا — approve يستطيع تعديل role إلى user فقط.
+    // لا حذف إطلاقًا (التعطيل فقط عبر isActive).
     match /users/{userId} {
       // القراءة: المستخدم مستنده فقط — والمدير أو صاحب صلاحية approve للجميع
       // (شاشة إدارة المستخدمين تتطلب قراءة القائمة).
@@ -131,7 +131,8 @@ service cloud.firestore {
       allow list: if isAdmin() || hasFinancialPerm('approve');
 
       allow create: if (
-          hasFinancialPerm('approve')
+          // فرع 1: المدير فقط ينشئ مستخدم بأي دور (بما فيها admin)
+          isAdmin()
           && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
           && isStr(request.resource.data.name, 3, 200)
           && isStr(request.resource.data.email, 5, 320)
@@ -140,7 +141,17 @@ service cloud.firestore {
           && request.resource.data.financialPermissions is map
           && request.resource.data.isActive is bool
         ) || (
-          // طلب Google الأول: لا يستطيع صاحبه منح أي دور أو صلاحية لنفسه.
+          // فرع 2: صاحب approve ينشئ مستخدم بدور user فقط — لا يستطيع منح admin
+          hasFinancialPerm('approve')
+          && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
+          && isStr(request.resource.data.name, 3, 200)
+          && isStr(request.resource.data.email, 5, 320)
+          && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+          && request.resource.data.role == 'user'
+          && request.resource.data.financialPermissions is map
+          && request.resource.data.isActive is bool
+        ) || (
+          // فرع 3: طلب Google الأول: لا يستطيع صاحبه منح أي دور أو صلاحية لنفسه.
           signedIn()
           && request.auth.uid == userId
           && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
@@ -158,17 +169,29 @@ service cloud.firestore {
           && request.resource.data.isActive == false
         );
 
-      allow update: if hasFinancialPerm('approve')
-        && onlyKeys(['name', 'role', 'financialPermissions', 'isActive'])
-        // حماية من التصعيد: لا تعديل الذات للدور/الصلاحيات/التفعيل
-        // (الاسم مسموح للذات فقط)
-        && (request.auth.uid != userId
-            || onlyKeys(['name']))
-        && (!isKeyChanged('name') || isStr(request.resource.data.name, 3, 200))
-        && (!isKeyChanged('role') || request.resource.data.role in ['admin', 'user'])
-        && (!isKeyChanged('financialPermissions')
-            || request.resource.data.financialPermissions is map)
-        && (!isKeyChanged('isActive') || request.resource.data.isActive is bool);
+      allow update: if (
+          // فرع 1: المدير يعدّل أي حقل (بما فيها تغيير الدور إلى admin)
+          isAdmin()
+          && onlyKeys(['name', 'role', 'financialPermissions', 'isActive'])
+          // حماية من التصعيد: لا تعديل الذات للدور/الصلاحيات/التفعيل ((الاسم مسموح للذات فقط))
+          && (request.auth.uid != userId || onlyKeys(['name']))
+          && (!isKeyChanged('name') || isStr(request.resource.data.name, 3, 200))
+          && (!isKeyChanged('role') || request.resource.data.role in ['admin', 'user'])
+          && (!isKeyChanged('financialPermissions')
+              || request.resource.data.financialPermissions is map)
+          && (!isKeyChanged('isActive') || request.resource.data.isActive is bool)
+        ) || (
+          // فرع 2: صاحب approve يعدّل — لكن لا يستطيع تعيين role=admin
+          hasFinancialPerm('approve')
+          && onlyKeys(['name', 'role', 'financialPermissions', 'isActive'])
+          && (request.auth.uid != userId || onlyKeys(['name']))
+          && (!isKeyChanged('name') || isStr(request.resource.data.name, 3, 200))
+          // القيد الجوهري: role لا يتغيّر إلى admin بيد غير المدير
+          && (!isKeyChanged('role') || request.resource.data.role == 'user')
+          && (!isKeyChanged('financialPermissions')
+              || request.resource.data.financialPermissions is map)
+          && (!isKeyChanged('isActive') || request.resource.data.isActive is bool)
+        );
 
       allow delete: if false;
     }
