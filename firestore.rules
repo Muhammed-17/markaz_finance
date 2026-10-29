@@ -181,8 +181,9 @@ service cloud.firestore {
               || request.resource.data.financialPermissions is map)
           && (!isKeyChanged('isActive') || request.resource.data.isActive is bool)
         ) || (
-          // فرع 2: صاحب approve يعدّل — لكن لا يستطيع تعيين role=admin
+          // فرع 2: صاحب approve يعدّل مستخدمين عاديين فقط — لا يستطيع تعديل المدير
           hasFinancialPerm('approve')
+          && resource.data.role == 'user'
           && onlyKeys(['name', 'role', 'financialPermissions', 'isActive'])
           && (request.auth.uid != userId || onlyKeys(['name']))
           && (!isKeyChanged('name') || isStr(request.resource.data.name, 3, 200))

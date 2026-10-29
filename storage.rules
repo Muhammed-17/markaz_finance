@@ -7,24 +7,35 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
+    function userDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
     // تحقق أن المستدعي مستخدم نشط في قاعدة البيانات
     function isActiveUser() {
       return request.auth != null
         && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
-        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isActive == true;
+        && userDoc().isActive == true;
     }
 
     // تحقق أن المستدعي مدير نشط
     function isAdminUser() {
       return isActiveUser()
-        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+        && userDoc().role == 'admin';
+    }
+
+    // تحقق أن المستدعي يملك صلاحية عرض الحركات المالية أو مدير
+    function canViewFinancials() {
+      return isActiveUser()
+        && (userDoc().role == 'admin'
+            || (userDoc().financialPermissions != null && userDoc().financialPermissions.view == true));
     }
 
     match /attachments/{folderName}/{fileName} {
-      // القراءة: المستخدم النشط المعتمد فقط — لا أي حساب Google عشوائي
-      allow read: if isActiveUser();
+      // القراءة: لمن يملك صلاحية view أو المدير فقط — حماية للإيصالات والمستندات المالية
+      allow read: if canViewFinancials();
 
-      // الكتابة: المستخدم النشط + قيود الحجم والنوع
+      // الكتابة: المستخدم النشط (لإرفاق الإيصالات عند إنشاء العمليات) + قيود الحجم والنوع
       allow write: if isActiveUser()
         && request.resource.size < 10 * 1024 * 1024
         && (request.resource.contentType.matches('image/.*')
