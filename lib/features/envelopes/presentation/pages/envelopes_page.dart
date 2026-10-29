@@ -23,6 +23,7 @@ import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../bloc/envelopes_bloc.dart';
 import 'envelope_form_sheet.dart';
+import 'envelope_reconciliation_dialog.dart';
 import 'envelope_transfer_sheet.dart';
 
 /// صفحة الأظرف المالية: بطاقات الأظرف النشطة والمؤرشفة مع الإجراءات.
@@ -51,6 +52,8 @@ class _EnvelopesPageState extends State<EnvelopesPage> {
 
   bool get _canUpdate =>
       PermissionService.can(_currentProfile, PermissionAction.update);
+
+  bool get _isAdmin => _currentProfile?.role == 'admin';
 
   @override
   void initState() {
@@ -194,6 +197,19 @@ class _EnvelopesPageState extends State<EnvelopesPage> {
                             onPressed: state.activeEnvelopes.length >= 2
                                 ? _openTransferSheet
                                 : null,
+                          ),
+                        ],
+                        if (_isAdmin) ...[
+                          const SizedBox(width: AppDimensions.spacing8),
+                          AppButton(
+                            label: 'مطابقة الأرصدة',
+                            icon: Icons.fact_check_outlined,
+                            isFullWidth: false,
+                            variant: AppButtonVariant.secondary,
+                            onPressed: () => showDialog<void>(
+                              context: context,
+                              builder: (_) => const EnvelopeReconciliationDialog(),
+                            ),
                           ),
                         ],
                       ],

@@ -44,6 +44,8 @@ void registerEnvelopesFeature(GetIt sl) {
   sl.registerLazySingleton(() => ArchiveEnvelope(sl<EnvelopesRepository>()));
   sl.registerLazySingleton(
       () => TransferBetweenEnvelopes(sl<EnvelopesRepository>()));
+  sl.registerLazySingleton(
+      () => ReconcileEnvelopes(sl<EnvelopesRepository>()));
 
   // Blocs
   sl.registerFactory<EnvelopesBloc>(

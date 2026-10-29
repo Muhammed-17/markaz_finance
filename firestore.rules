@@ -84,6 +84,35 @@ service cloud.firestore {
       return callerExistsAndActive() && hasPerm(callerProfile(), action);
     }
 
+    // إشارة حركة الظرف حسب نوعها
+    function envTxSign(t) {
+      return (t == 'income' || t == 'allocation' || t == 'transfer_in' || t == 'refund')
+        ? 1 : -1;
+    }
+
+    // مطابقة دلتا رصيد الظرف مع مبلغ حركة الظرف المقترنة
+    function envTxMatchesDelta(envPath, d) {
+      let pre = get(envPath).data;
+      let post = getAfter(envPath).data;
+      let diff = post.currentBalance - pre.currentBalance;
+      // التسوية (adjustment) قد تكون بأي إشارة (تراجع إيراد أو مصروف ملغى)
+      return d.type == 'adjustment'
+        ? math.abs(math.abs(diff) - d.amount) < 0.005
+        : math.abs(diff - (envTxSign(d.type) * d.amount)) < 0.005;
+    }
+
+    // تحقق من أن تحديث رصيد الظرف مقترن بحركة ظرف جديدة في نفس الدفعة (اقتران ثنائي)
+    function envelopeBalancePaired(envelopeId, txId) {
+      let txPath = /databases/$(database)/documents/envelopeTransactions/$(txId);
+      return !exists(txPath)
+        && existsAfter(txPath)
+        && getAfter(txPath).data.envelopeId == envelopeId
+        && envTxMatchesDelta(
+            /databases/$(database)/documents/fundEnvelopes/$(envelopeId),
+            getAfter(txPath).data
+           );
+    }
+
     // ================= المراكز =================
 
     match /centers/{centerId} {
@@ -202,8 +231,22 @@ service cloud.firestore {
       allow get, list: if callerExistsAndActive();
 
       allow create: if hasFinancialPerm('create')
-        && createKeys(['name', 'purpose', 'fundType', 'allowedExpenseCategories',
+        && (
+          // إنشاء برصيد صفر وبدون lastEnvTxId
+          (createKeys(['name', 'purpose', 'fundType', 'allowedExpenseCategories',
                        'currentBalance', 'centerId', 'status', 'createdAt'])
+            && request.resource.data.currentBalance == 0)
+          ||
+          // إنشاء برصيد افتتاحي مع lastEnvTxId مقترن بحركة allocation في نفس الدفعة
+          (createKeys(['name', 'purpose', 'fundType', 'allowedExpenseCategories',
+                       'currentBalance', 'centerId', 'status', 'createdAt', 'lastEnvTxId'])
+            && request.resource.data.currentBalance > 0
+            && isStr(request.resource.data.lastEnvTxId, 1, 128)
+            && existsAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId))
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.envelopeId == envelopeId
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.type == 'allocation'
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.amount == request.resource.data.currentBalance)
+        )
         && isStr(request.resource.data.name, 3, 120)
         && isStr(request.resource.data.purpose, 3, 500)
         && request.resource.data.fundType in ['general', 'restricted']
@@ -237,10 +280,13 @@ service cloud.firestore {
           && (request.resource.data.status == 'active'
               || resource.data.currentBalance == 0))
         ||
-        // 3) تحديث الرصيد فقط — ضمن معاملة مالية ذرية (صلاحية create أو cancel)
-        (onlyKeys(['currentBalance'])
+        // 3) تحديث الرصيد — اقتران ثنائي إلزامي بحركة ظرف جديدة في نفس الدفعة
+        (onlyKeys(['currentBalance', 'lastEnvTxId'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasAll(['currentBalance', 'lastEnvTxId'])
           && (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
-          && isBalance(request.resource.data.currentBalance))
+          && isBalance(request.resource.data.currentBalance)
+          && isStr(request.resource.data.lastEnvTxId, 1, 128)
+          && envelopeBalancePaired(envelopeId, request.resource.data.lastEnvTxId))
       );
 
       allow delete: if false;
@@ -338,11 +384,6 @@ service cloud.firestore {
       allow get, list: if hasFinancialPerm('view');
 
       // كل حركة ظرف مقرونة بتغيّر رصيد الظرف بنفس أثرها في نفس الدفعة
-      function envTxSign(t) {
-        return (t == 'income' || t == 'allocation' || t == 'transfer_in' || t == 'refund')
-          ? 1 : -1;
-      }
-
       function envTxPaired(d) {
         let envPath = /databases/$(database)/documents/fundEnvelopes/$(d.envelopeId);
         // تخصيص رصيد افتتاحي مع إنشاء الظرف في نفس الدفعة
@@ -351,16 +392,6 @@ service cloud.firestore {
             && getAfter(envPath).data.currentBalance == d.amount)
           || (exists(envPath)
             && envTxMatchesDelta(envPath, d));
-      }
-
-      function envTxMatchesDelta(envPath, d) {
-        let pre = get(envPath).data;
-        let post = getAfter(envPath).data;
-        let diff = post.currentBalance - pre.currentBalance;
-        // التسوية (adjustment) قد تكون بأي إشارة (تراجع إيراد أو مصروف ملغى)
-        return d.type == 'adjustment'
-          ? math.abs(math.abs(diff) - d.amount) < 0.005
-          : math.abs(diff - (envTxSign(d.type) * d.amount)) < 0.005;
       }
 
       allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel'))

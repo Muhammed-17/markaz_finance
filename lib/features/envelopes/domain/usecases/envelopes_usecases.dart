@@ -4,6 +4,7 @@ import '../../../../core/domain/entities/envelope_entity.dart';
 import '../../../../core/domain/entities/envelope_transaction_entity.dart';
 import '../../../../core/errors/failures.dart';
 import '../entities/envelope_form_params.dart';
+import '../entities/envelope_reconciliation_entity.dart';
 import '../repositories/envelopes_repository.dart';
 
 /// حالات استخدام ميزة الأظرف المالية.
@@ -67,4 +68,14 @@ class TransferBetweenEnvelopes {
 
   Future<Either<Failure, Unit>> call(TransferParams params) =>
       _repository.transferBetweenEnvelopes(params);
+}
+
+/// فحص ومطابقة أرصدة الأظرف بمجموع الحركات (التسوية الدورية — الخيار ج).
+class ReconcileEnvelopes {
+  const ReconcileEnvelopes(this._repository);
+
+  final EnvelopesRepository _repository;
+
+  Future<Either<Failure, EnvelopeReconciliationResult>> call() =>
+      _repository.reconcileEnvelopes();
 }

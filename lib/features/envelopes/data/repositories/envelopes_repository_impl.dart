@@ -9,6 +9,7 @@ import '../../../../core/errors/error_handler.dart';
 import '../../../../core/errors/failures.dart';
 import '../../../../core/network/connectivity_service.dart';
 import '../../domain/entities/envelope_form_params.dart';
+import '../../domain/entities/envelope_reconciliation_entity.dart';
 import '../../domain/repositories/envelopes_repository.dart';
 import '../datasources/envelopes_local_data_source.dart';
 import '../datasources/envelopes_remote_data_source.dart';
@@ -131,6 +132,19 @@ class EnvelopesRepositoryImpl implements EnvelopesRepository {
       }
       await _remote.transferBetweenEnvelopes(params);
       return const Right(unit);
+    } catch (e) {
+      return Left(ErrorHandler.handle(e));
+    }
+  }
+
+  @override
+  Future<Either<Failure, EnvelopeReconciliationResult>> reconcileEnvelopes() async {
+    try {
+      if (!await _connectivity.checkNow()) {
+        return const Left(NetworkFailure('التسوية المحاسبية تتطلب اتصالاً بالإنترنت'));
+      }
+      final result = await _remote.reconcileEnvelopes();
+      return Right(result);
     } catch (e) {
       return Left(ErrorHandler.handle(e));
     }

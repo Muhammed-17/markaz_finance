@@ -6,6 +6,7 @@ import '../../../../core/domain/entities/envelope_entity.dart';
 import '../../../../core/domain/entities/envelope_transaction_entity.dart';
 import '../../../../core/errors/failures.dart';
 import '../entities/envelope_form_params.dart';
+import '../entities/envelope_reconciliation_entity.dart';
 
 /// لقطة الأظرف المخزنة مؤقتًا محليًا (عرض مؤقت فقط — ليس مصدرًا موثوقًا للأرصدة).
 class EnvelopesCacheSnapshot extends Equatable {
@@ -62,4 +63,7 @@ abstract class EnvelopesRepository {
   /// تحويل مبلغ بين ظرفين — عبر دالة transferBetweenEnvelopes.
   /// لا يغير إجمالي النقد في الخزنة.
   Future<Either<Failure, Unit>> transferBetweenEnvelopes(TransferParams params);
+
+  /// إجراء فحص ومطابقة محاسبية دورية للأرصدة مع مجموع الحركات (الخيار ج).
+  Future<Either<Failure, EnvelopeReconciliationResult>> reconcileEnvelopes();
 }

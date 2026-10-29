@@ -15,6 +15,7 @@ class EnvelopeModel {
     required this.centerId,
     required this.status,
     required this.createdAt,
+    this.lastEnvTxId,
   });
 
   final String id;
@@ -26,6 +27,7 @@ class EnvelopeModel {
   final String? centerId;
   final String status;
   final DateTime createdAt;
+  final String? lastEnvTxId;
 
   factory EnvelopeModel.fromMap(String id, Map<String, dynamic> map) {
     return EnvelopeModel(
@@ -41,6 +43,7 @@ class EnvelopeModel {
       centerId: map['centerId'] as String?,
       status: (map['status'] ?? '') as String,
       createdAt: _toDateTime(map['createdAt']),
+      lastEnvTxId: map['lastEnvTxId'] as String?,
     );
   }
 
@@ -67,6 +70,7 @@ class EnvelopeModel {
         'centerId': centerId,
         'status': status,
         'createdAt': Timestamp.fromDate(createdAt),
+        if (lastEnvTxId != null) 'lastEnvTxId': lastEnvTxId,
       };
 
   EnvelopeEntity toEntity() => EnvelopeEntity(
@@ -79,5 +83,6 @@ class EnvelopeModel {
         centerId: centerId,
         status: status,
         createdAt: createdAt,
+        lastEnvTxId: lastEnvTxId,
       );
 }

@@ -179,6 +179,7 @@ class FinancialOperationsService {
 
     tx.update(envelopeRef, <String, dynamic>{
       'currentBalance': newBalance,
+      'lastEnvTxId': envelopeTransactionRef.id,
     });
     tx.set(envelopeTransactionRef, <String, dynamic>{
       'envelopeId': envelopeId,
@@ -233,14 +234,27 @@ class FinancialOperationsService {
       final envelopeSnap = await tx.get(envelopeRef);
       if (envelopeSnap.exists) {
         final currentBalance =
-            (envelopeSnap.data()!['balance'] as num?)?.toDouble() ?? 0.0;
-        // الإلغاء يعكس العملية: الإيراد يُخصم، المصروف يُضاف.
+            (envelopeSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
+        // الإلغاء يعكس العملية: الإيراد يُخصم (adjustment)، المصروف يُضاف (refund).
         final newBalance = type == 'income'
             ? currentBalance - amount
             : currentBalance + amount;
+        final envelopeTxType = type == 'income' ? 'adjustment' : 'refund';
+        final envelopeTransactionRef =
+            _firestore.collection('envelopeTransactions').doc();
+
         tx.update(envelopeRef, <String, dynamic>{
-          'balance': newBalance,
-          'updatedAt': now,
+          'currentBalance': newBalance,
+          'lastEnvTxId': envelopeTransactionRef.id,
+        });
+        tx.set(envelopeTransactionRef, <String, dynamic>{
+          'envelopeId': envelopeId,
+          'transactionId': transactionId,
+          'type': envelopeTxType,
+          'amount': amount,
+          'notes': 'إلغاء الحركة: ${txData['name'] ?? transactionId}',
+          'createdBy': uid,
+          'createdAt': now,
         });
       }
     }
@@ -277,23 +291,44 @@ class FinancialOperationsService {
     if (!toSnap.exists) throw const ServerException('الظرف الهدف غير موجود');
 
     final fromBalance =
-        (fromSnap.data()!['balance'] as num?)?.toDouble() ?? 0.0;
+        (fromSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
     if (fromBalance < amount) {
       throw OperationRejectedException(
         'رصيد الظرف المصدر غير كافٍ: المتاح ${fromBalance.toStringAsFixed(2)}',
       );
     }
 
-    final toBalance = (toSnap.data()!['balance'] as num?)?.toDouble() ?? 0.0;
+    final toBalance = (toSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
     final now = FieldValue.serverTimestamp();
+    final fromEnvTxRef = _firestore.collection('envelopeTransactions').doc();
+    final toEnvTxRef = _firestore.collection('envelopeTransactions').doc();
 
     tx.update(fromRef, <String, dynamic>{
-      'balance': fromBalance - amount,
-      'updatedAt': now,
+      'currentBalance': fromBalance - amount,
+      'lastEnvTxId': fromEnvTxRef.id,
     });
+    tx.set(fromEnvTxRef, <String, dynamic>{
+      'envelopeId': fromId,
+      'transactionId': null,
+      'type': 'transfer_out',
+      'amount': amount,
+      'notes': 'تحويل إلى ظرف: ${toSnap.data()?['name'] ?? toId}',
+      'createdBy': uid,
+      'createdAt': now,
+    });
+
     tx.update(toRef, <String, dynamic>{
-      'balance': toBalance + amount,
-      'updatedAt': now,
+      'currentBalance': toBalance + amount,
+      'lastEnvTxId': toEnvTxRef.id,
+    });
+    tx.set(toEnvTxRef, <String, dynamic>{
+      'envelopeId': toId,
+      'transactionId': null,
+      'type': 'transfer_in',
+      'amount': amount,
+      'notes': 'تحويل من ظرف: ${fromSnap.data()?['name'] ?? fromId}',
+      'createdBy': uid,
+      'createdAt': now,
     });
 
     return {};
@@ -335,6 +370,10 @@ class FinancialOperationsService {
     final ref = _firestore.collection('fundEnvelopes').doc();
     final now = FieldValue.serverTimestamp();
 
+    final envelopeTransactionRef = initialBalance > 0
+        ? _firestore.collection('envelopeTransactions').doc()
+        : null;
+
     // يجب أن تطابق هذه الحقول عقد قواعد Firestore حرفيًا. لا تُخزَّن
     // initialBalance أو id أو createdBy داخل الظرف لأنها ليست من حقوله.
     tx.set(ref, <String, dynamic>{
@@ -346,6 +385,7 @@ class FinancialOperationsService {
       'centerId': centerId,
       'status': 'active',
       'createdAt': now,
+      if (envelopeTransactionRef != null) 'lastEnvTxId': envelopeTransactionRef.id,
     });
 
     if (initialBalance <= 0) {
@@ -355,8 +395,6 @@ class FinancialOperationsService {
     // الرصيد الافتتاحي ليس حقلًا مستقلًا: يوثق كإيراد وحركة تخصيص في
     // المعاملة الذرية ذاتها حتى يظل رصيد الظرف وسجل الحركات متطابقين.
     final transactionRef = _firestore.collection('transactions').doc();
-    final envelopeTransactionRef =
-        _firestore.collection('envelopeTransactions').doc();
     final openingName = 'رصيد افتتاحي — ${name.trim()}';
 
     tx.set(transactionRef, <String, dynamic>{
@@ -375,7 +413,7 @@ class FinancialOperationsService {
       'notes': 'رصيد افتتاحي للظرف: ${name.trim()}',
       'createdAt': now,
     });
-    tx.set(envelopeTransactionRef, <String, dynamic>{
+    tx.set(envelopeTransactionRef!, <String, dynamic>{
       'envelopeId': ref.id,
       'transactionId': transactionRef.id,
       'type': 'allocation',
@@ -485,6 +523,7 @@ class FinancialOperationsService {
     });
     tx.update(envelopeRef, <String, dynamic>{
       'currentBalance': balance - amount,
+      'lastEnvTxId': envelopeTransactionRef.id,
     });
     tx.set(transactionRef, <String, dynamic>{
       'centerId': envelope['centerId'],
@@ -573,12 +612,17 @@ class FinancialOperationsService {
       'status': newRemaining <= 0 ? 'paid_off' : 'active',
     });
 
-    // 2. زيادة رصيد ظرف الاستلام
+    // 2. إنشاء حركة الظرف المقترنة (envelopeTransactions)
+    final envelopeTransactionRef =
+        _firestore.collection('envelopeTransactions').doc();
+
+    // 3. زيادة رصيد ظرف الاستلام مع إقرانه بمعرف حركة الظرف
     tx.update(envelopeRef, <String, dynamic>{
       'currentBalance': envelopeBalance + amount,
+      'lastEnvTxId': envelopeTransactionRef.id,
     });
 
-    // 3. إنشاء الحركة المالية النقدية (transactions) المقترنة بزيادة رصيد الظرف
+    // 4. إنشاء الحركة المالية النقدية (transactions) المقترنة بزيادة رصيد الظرف
     final transactionRef = _firestore.collection('transactions').doc();
     tx.set(transactionRef, <String, dynamic>{
       'centerId': envelope['centerId'],
@@ -597,9 +641,6 @@ class FinancialOperationsService {
       'createdAt': now,
     });
 
-    // 4. إنشاء حركة الظرف المقترنة (envelopeTransactions)
-    final envelopeTransactionRef =
-        _firestore.collection('envelopeTransactions').doc();
     tx.set(envelopeTransactionRef, <String, dynamic>{
       'envelopeId': envelopeId,
       'transactionId': transactionRef.id,

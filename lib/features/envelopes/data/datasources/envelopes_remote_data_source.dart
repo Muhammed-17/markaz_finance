@@ -7,6 +7,7 @@ import '../../../../core/domain/entities/center_ref.dart';
 import '../../../../core/errors/exceptions.dart';
 import '../../../../core/services/financial_operations_service.dart';
 import '../../domain/entities/envelope_form_params.dart';
+import '../../domain/entities/envelope_reconciliation_entity.dart';
 
 /// مصدر بيانات الأظرف المالية البعيد.
 ///
@@ -88,6 +89,57 @@ class EnvelopesRemoteDataSource {
     await _operations.call(
       AppFunctions.transferBetweenEnvelopes,
       params.toCallableData(),
+    );
+  }
+
+  /// فحص ومطابقة كل الأظرف ومقارنة رصيدها بمجموع حركات envelopeTransactions (الخيار ج).
+  Future<EnvelopeReconciliationResult> reconcileEnvelopes() async {
+    final envelopesSnap = await _envelopes.orderBy('name').get();
+    final items = <EnvelopeReconciliationItem>[];
+
+    for (final envDoc in envelopesSnap.docs) {
+      final envData = envDoc.data();
+      final envId = envDoc.id;
+      final envName = (envData['name'] ?? '') as String;
+      final currentBalance =
+          ((envData['currentBalance'] ?? 0) as num).toDouble();
+
+      final txSnap = await _envelopeTransactions
+          .where('envelopeId', isEqualTo: envId)
+          .get();
+
+      double calculatedBalance = 0.0;
+      for (final txDoc in txSnap.docs) {
+        final d = txDoc.data();
+        final type = (d['type'] ?? '') as String;
+        final amount = ((d['amount'] ?? 0) as num).toDouble();
+        final isAdd = type == 'income' ||
+            type == 'allocation' ||
+            type == 'transfer_in' ||
+            type == 'refund';
+        final isSub = type == 'expense' ||
+            type == 'transfer_out' ||
+            type == 'adjustment';
+        calculatedBalance += isAdd ? amount : (isSub ? -amount : 0.0);
+      }
+
+      final diff = currentBalance - calculatedBalance;
+      final isMatched = diff.abs() < 0.01;
+
+      items.add(EnvelopeReconciliationItem(
+        envelopeId: envId,
+        envelopeName: envName,
+        currentBalance: currentBalance,
+        calculatedBalance: calculatedBalance,
+        transactionCount: txSnap.docs.length,
+        isMatched: isMatched,
+        discrepancy: diff,
+      ));
+    }
+
+    return EnvelopeReconciliationResult(
+      items: items,
+      reconciledAt: DateTime.now(),
     );
   }
 }

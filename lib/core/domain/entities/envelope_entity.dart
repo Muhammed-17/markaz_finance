@@ -14,6 +14,7 @@ class EnvelopeEntity extends Equatable {
     required this.centerId,
     required this.status,
     required this.createdAt,
+    this.lastEnvTxId,
   });
 
   final String id;
@@ -35,6 +36,7 @@ class EnvelopeEntity extends Equatable {
   /// 'active' أو 'archived'.
   final String status;
   final DateTime createdAt;
+  final String? lastEnvTxId;
 
   bool get isGeneral => fundType == AppFundTypes.general;
   bool get isRestricted => fundType == AppFundTypes.restricted;
@@ -60,6 +62,7 @@ class EnvelopeEntity extends Equatable {
     String? centerId,
     String? status,
     DateTime? createdAt,
+    String? lastEnvTxId,
   }) {
     return EnvelopeEntity(
       id: id ?? this.id,
@@ -72,12 +75,13 @@ class EnvelopeEntity extends Equatable {
       centerId: centerId ?? this.centerId,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
+      lastEnvTxId: lastEnvTxId ?? this.lastEnvTxId,
     );
   }
 
   @override
   List<Object?> get props => [
         id, name, purpose, fundType, allowedExpenseCategories,
-        currentBalance, centerId, status, createdAt,
+        currentBalance, centerId, status, createdAt, lastEnvTxId,
       ];
 }
