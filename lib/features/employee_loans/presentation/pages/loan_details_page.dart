@@ -44,6 +44,7 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
   String? _paymentsFailure;
   String? _logsFailure;
   bool _isSheetOpen = false;
+  NavigatorState? _openSheetNavigator;
 
   @override
   void initState() {
@@ -114,12 +115,24 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (sheetContext) => BlocProvider<EmployeeLoansBloc>.value(
-        value: context.read<EmployeeLoansBloc>(),
-        child: LoanRepaySheet(loan: loan),
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppDimensions.radiusExtraLarge),
+        ),
       ),
+      builder: (sheetContext) {
+        _openSheetNavigator = Navigator.of(sheetContext);
+        return BlocProvider<EmployeeLoansBloc>.value(
+          value: context.read<EmployeeLoansBloc>(),
+          child: LoanRepaySheet(loan: loan),
+        );
+      },
     );
-    if (mounted) setState(() => _isSheetOpen = false);
+    if (mounted) {
+      setState(() => _isSheetOpen = false);
+      _openSheetNavigator = null;
+    }
   }
 
   @override
@@ -140,7 +153,7 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
           if (state.status == EmployeeLoansStatus.operationCompleted &&
               state.lastOperation == EmployeeLoansOperation.repay) {
             if (_isSheetOpen) {
-              Navigator.of(context).pop();
+              _openSheetNavigator?.pop();
               setState(() => _isSheetOpen = false);
             }
             _loadPayments();

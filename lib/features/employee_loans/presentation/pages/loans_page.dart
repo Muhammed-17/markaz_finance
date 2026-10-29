@@ -34,6 +34,7 @@ class LoansPage extends StatefulWidget {
 class _LoansPageState extends State<LoansPage> {
   /// هل توجد نافذة سفلية مفتوحة الآن؟ (لإغلاقها عند نجاح العملية فقط)
   bool _isSheetOpen = false;
+  NavigatorState? _openSheetNavigator;
   late final EmployeeLoansBloc _loansBloc;
 
   UserProfileEntity? get _currentProfile {
@@ -62,19 +63,25 @@ class _LoansPageState extends State<LoansPage> {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => Dialog(
-        insetPadding: const EdgeInsets.all(AppDimensions.pagePaddingMobile),
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
-          child: BlocProvider<EmployeeLoansBloc>.value(
-            value: _loansBloc,
-            child: const LoanFormSheet(),
+      builder: (dialogContext) {
+        _openSheetNavigator = Navigator.of(dialogContext);
+        return Dialog(
+          insetPadding: const EdgeInsets.all(AppDimensions.pagePaddingMobile),
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: BlocProvider<EmployeeLoansBloc>.value(
+              value: _loansBloc,
+              child: const LoanFormSheet(),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
-    if (mounted) setState(() => _isSheetOpen = false);
+    if (mounted) {
+      setState(() => _isSheetOpen = false);
+      _openSheetNavigator = null;
+    }
   }
 
   @override
@@ -91,10 +98,10 @@ class _LoansPageState extends State<LoansPage> {
               isError: state.status == EmployeeLoansStatus.operationFailure,
             );
           }
-          // إغلاق نافذة النموذج بعد نجاح العملية فقط.
+          // إغلاق نافذة النموذج بعد نجاح العملية فقط عبر ملاح النافذة المخصص.
           if (state.status == EmployeeLoansStatus.operationCompleted &&
               _isSheetOpen) {
-            Navigator.of(context).pop();
+            _openSheetNavigator?.pop();
             setState(() => _isSheetOpen = false);
           }
         },
