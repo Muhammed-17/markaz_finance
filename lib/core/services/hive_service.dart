@@ -47,6 +47,7 @@ class HiveService {
     await _ensureBox(c.AppCollections.cacheBranchesBox);
     await _ensureBox(c.AppCollections.cacheEnvelopesBox);
     await _ensureBox(c.AppCollections.cacheUsersBox);
+    await _ensureBox(c.AppCollections.cacheCategoriesBox);
     // الطابور يحتوي على مبالغ ومعرفات مالية — يُفتح بمشفّر AES-256
     final cipher = await _encryption.getOrCreateCipher();
     await _ensureBox(c.AppCollections.pendingOperationsBox, encryptionCipher: cipher);

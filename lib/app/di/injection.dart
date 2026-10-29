@@ -1,6 +1,7 @@
 import 'package:get_it/get_it.dart';
 
 import '../../core/network/connectivity_service.dart';
+import '../../core/services/categories_service.dart';
 import '../../core/services/financial_operations_service.dart';
 import '../../core/services/firebase_service.dart';
 import '../../core/services/hive_encryption_service.dart';
@@ -51,6 +52,12 @@ Future<void> configureDependencies() async {
     () => PendingOperationsService(
       connectivityService: sl<ConnectivityService>(),
       financialOperationsService: sl<FinancialOperationsService>(),
+    ),
+  );
+  sl.registerLazySingleton<CategoriesService>(
+    () => CategoriesService(
+      firestore: FirebaseService.firestore,
+      hive: sl<HiveService>(),
     ),
   );
 

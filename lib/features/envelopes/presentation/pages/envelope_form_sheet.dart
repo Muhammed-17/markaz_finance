@@ -15,6 +15,7 @@ import '../../../../core/widgets/app_loading.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../app/di/injection.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../core/services/categories_service.dart';
 import '../../../transactions/presentation/widgets/month_field.dart'
     show categoryLabel;
 import '../../domain/entities/envelope_form_params.dart';
@@ -95,6 +96,100 @@ class _EnvelopeFormSheetState extends State<EnvelopeFormSheet> {
   }
 
   bool get _isRestricted => _fundType == AppFundTypes.restricted;
+
+  List<String> get _allExpenseCategories {
+    final custom = sl.isRegistered<CategoriesService>()
+        ? sl<CategoriesService>().expenseCategories.map((c) => c.id).toList()
+        : <String>[];
+    return {...AppExpenseCategories.all, ...custom}.toList();
+  }
+
+  Future<void> _showAddCategoryDialog() async {
+    final controller = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool adding = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('إضافة تصنيف مصروف جديد'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'اسم التصنيف *',
+                    hintText: 'مثال: جوائز ومسابقات، صيانة سيارات',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (val) {
+                    if (val == null || val.trim().length < 2) {
+                      return 'أدخل اسم تصنيف صحيح (حرفين على الأقل)';
+                    }
+                    return null;
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: adding ? null : () => Navigator.of(dialogCtx).pop(),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: adding
+                  ? null
+                  : () async {
+                      if (!formKey.currentState!.validate()) return;
+                      final messenger = ScaffoldMessenger.of(context);
+                      final nav = Navigator.of(dialogCtx);
+                      setDialogState(() => adding = true);
+                      try {
+                        final name = controller.text.trim();
+                        await sl<CategoriesService>().addCategory(
+                          name: name,
+                          type: AppTransactionTypes.expense,
+                        );
+                        if (!mounted) return;
+                        setState(() {
+                          // إضافة المعرف تلقائياً إلى المحددات
+                          final id = name
+                              .replaceAll(RegExp(r'\s+'), '_')
+                              .replaceAll(RegExp(r'[^a-zA-Z0-9_\u0600-\u06FF]'), '');
+                          _selectedCategories.add(id.isEmpty ? name : id);
+                          _categoriesError = false;
+                        });
+                        nav.pop();
+                        messenger.showSnackBar(
+                          SnackBar(content: Text('تمت إضافة التصنيف "$name" بنجاح')),
+                        );
+                      } catch (e) {
+                        setDialogState(() => adding = false);
+                        messenger.showSnackBar(
+                          SnackBar(content: Text('تعذر إضافة التصنيف: $e')),
+                        );
+                      }
+                    },
+              child: adding
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('إضافة'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+  }
 
   Future<void> _submit() async {
     // التصنيفات إلزامية للظرف المخصص (فحص محلي — والخادم يتحقق نهائيًا).
@@ -211,7 +306,7 @@ class _EnvelopeFormSheetState extends State<EnvelopeFormSheet> {
                                 const SizedBox(
                                     height: AppDimensions.itemSpacing),
                                 AppTextField(
-                                  label: 'الغرض *',
+                                  label: 'الغرض (اختياري)',
                                   controller: _purposeController,
                                   hintText: 'ما الغرض من هذا الظرف؟',
                                   maxLines: 3,
@@ -219,7 +314,7 @@ class _EnvelopeFormSheetState extends State<EnvelopeFormSheet> {
                                   enabled: !isSubmitting,
                                   validator: (v) => AppValidators.description(
                                     v,
-                                    isRequired: true,
+                                    isRequired: false,
                                     fieldName: 'الغرض',
                                   ),
                                 ),
@@ -301,58 +396,108 @@ class _EnvelopeFormSheetState extends State<EnvelopeFormSheet> {
                                 const SizedBox(
                                     height: AppDimensions.itemSpacing),
 
-                                // التصنيفات المسموحة (إلزامية للمخصص)
-                                Text(
-                                  _isRestricted
-                                      ? 'التصنيفات المسموحة *'
-                                      : 'التصنيفات المسموحة (للمخصص فقط)',
-                                  style: AppTypography.titleMedium,
-                                ),
-                                const SizedBox(height: AppDimensions.spacing8),
-                                Wrap(
-                                  spacing: AppDimensions.spacing8,
-                                  runSpacing: AppDimensions.spacing8,
-                                  children:
-                                      AppExpenseCategories.all.map((category) {
-                                    final selected =
-                                        _selectedCategories.contains(category);
-                                    return FilterChip(
-                                      label: Text(categoryLabel(category)),
-                                      selected: selected,
-                                      // تُبقى قابلة للتغيير في وضع التعديل
-                                      // (تعديل التصنيفات مسموح من الخادم).
-                                      onSelected: isSubmitting
-                                          ? null
-                                          : (value) => setState(() {
-                                                if (value) {
-                                                  _selectedCategories
-                                                      .add(category);
-                                                } else {
-                                                  _selectedCategories
-                                                      .remove(category);
-                                                }
-                                                if (_selectedCategories
-                                                    .isNotEmpty) {
-                                                  _categoriesError = false;
-                                                }
-                                              }),
-                                    );
-                                  }).toList(),
-                                ),
-                                if (_categoriesError)
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                      top: AppDimensions.spacing8,
-                                    ),
-                                    child: Text(
-                                      'اختر تصنيفًا واحدًا على الأقل للظرف المخصص',
-                                      style: AppTypography.labelSmall.copyWith(
-                                        color: AppColors.error,
+                                // التصنيفات المسموحة (للمخصص فقط)
+                                if (_isRestricted) ...[
+                                  const Text(
+                                    'التصنيفات المسموحة لهذا الظرف *',
+                                    style: AppTypography.titleMedium,
+                                  ),
+                                  const SizedBox(height: AppDimensions.spacing4),
+                                  Text(
+                                    'حدد أوجه الصرف المسموح بها حصرًا لهذا الظرف المخصص:',
+                                    style: AppTypography.bodySmall
+                                        .copyWith(color: AppColors.textSecondary),
+                                  ),
+                                  const SizedBox(height: AppDimensions.spacing8),
+                                  Wrap(
+                                    spacing: AppDimensions.spacing8,
+                                    runSpacing: AppDimensions.spacing8,
+                                    children: [
+                                      ..._allExpenseCategories.map((category) {
+                                        final selected =
+                                            _selectedCategories.contains(category);
+                                        return FilterChip(
+                                          label: Text(categoryLabel(category)),
+                                          selected: selected,
+                                          onSelected: isSubmitting
+                                              ? null
+                                              : (value) => setState(() {
+                                                    if (value) {
+                                                      _selectedCategories
+                                                          .add(category);
+                                                    } else {
+                                                      _selectedCategories
+                                                          .remove(category);
+                                                    }
+                                                    if (_selectedCategories
+                                                        .isNotEmpty) {
+                                                      _categoriesError = false;
+                                                    }
+                                                  }),
+                                        );
+                                      }),
+                                      ActionChip(
+                                        avatar: const Icon(Icons.add, size: 18),
+                                        label: const Text('تصنيف جديد'),
+                                        onPressed: isSubmitting
+                                            ? null
+                                            : _showAddCategoryDialog,
+                                      ),
+                                    ],
+                                  ),
+                                  if (_categoriesError)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: AppDimensions.spacing8,
+                                      ),
+                                      child: Text(
+                                        'اختر تصنيفًا واحدًا على الأقل للظرف المخصص',
+                                        style: AppTypography.labelSmall.copyWith(
+                                          color: AppColors.error,
+                                        ),
                                       ),
                                     ),
+                                  const SizedBox(
+                                      height: AppDimensions.itemSpacing),
+                                ] else ...[
+                                  Container(
+                                    padding: const EdgeInsets.all(
+                                      AppDimensions.spacing12,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.surfaceAlt,
+                                      borderRadius: BorderRadius.circular(
+                                        AppDimensions.radiusMedium,
+                                      ),
+                                      border: Border.all(
+                                        color: AppColors.border,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.check_circle_outline_rounded,
+                                          size: AppDimensions.iconSmall,
+                                          color: AppColors.success,
+                                        ),
+                                        const SizedBox(
+                                          width: AppDimensions.spacing8,
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            'الظرف العام يسمح بجميع تصنيفات المصروفات بدون قيود.',
+                                            style: AppTypography.bodySmall
+                                                .copyWith(
+                                              color: AppColors.textSecondary,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                const SizedBox(
-                                    height: AppDimensions.itemSpacing),
+                                  const SizedBox(
+                                      height: AppDimensions.itemSpacing),
+                                ],
 
                                 // المركز (اختياري)
                                 if (_isLoadingCenters)

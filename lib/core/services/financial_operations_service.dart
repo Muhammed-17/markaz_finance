@@ -152,6 +152,20 @@ class FinancialOperationsService {
       );
     }
 
+    final fundType = envelopeData['fundType'] as String?;
+    final allowedExpenseCategories =
+        ((envelopeData['allowedExpenseCategories'] ?? const <String>[]) as List)
+            .whereType<String>()
+            .toList();
+
+    if (type == 'expense' &&
+        fundType == 'restricted' &&
+        !allowedExpenseCategories.contains(category)) {
+      throw const OperationRejectedException(
+        'لا يمكن تسجيل هذا المصروف: الظرف المالي مخصص لبنود صرف محددة فقط ولا يشمل هذا التصنيف',
+      );
+    }
+
     final newBalance =
         type == 'income' ? currentBalance + amount : currentBalance - amount;
 
@@ -298,9 +312,11 @@ class FinancialOperationsService {
       );
     }
 
-    final toBalance = (toSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
+    final toBalance =
+        (toSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
     final now = FieldValue.serverTimestamp();
-    final transferId = 'tr_${DateTime.now().millisecondsSinceEpoch}_${fromId}_$toId';
+    final transferId =
+        'tr_${DateTime.now().millisecondsSinceEpoch}_${fromId}_$toId';
     final fromEnvTxRef =
         _firestore.collection('envelopeTransactions').doc('${transferId}_out');
     final toEnvTxRef =
@@ -350,9 +366,6 @@ class FinancialOperationsService {
     if (name == null || name.trim().isEmpty) {
       throw const ValidationException('اسم الظرف مطلوب');
     }
-    if (purpose == null || purpose.trim().isEmpty) {
-      throw const ValidationException('الغرض من الظرف مطلوب');
-    }
     if (fundType != 'general' && fundType != 'restricted') {
       throw const ValidationException('نوع الظرف غير صحيح');
     }
@@ -381,14 +394,15 @@ class FinancialOperationsService {
     // initialBalance أو id أو createdBy داخل الظرف لأنها ليست من حقوله.
     tx.set(ref, <String, dynamic>{
       'name': name.trim(),
-      'purpose': purpose.trim(),
+      'purpose': purpose?.trim(),
       'fundType': fundType,
       'allowedExpenseCategories': allowedExpenseCategories,
       'currentBalance': initialBalance,
       'centerId': centerId,
       'status': 'active',
       'createdAt': now,
-      if (envelopeTransactionRef != null) 'lastEnvTxId': envelopeTransactionRef.id,
+      if (envelopeTransactionRef != null)
+        'lastEnvTxId': envelopeTransactionRef.id,
     });
 
     if (initialBalance <= 0) {
@@ -601,11 +615,13 @@ class FinancialOperationsService {
     final userSnap = await tx.get(userRef);
 
     if (!loanSnap.exists) throw const ServerException('السلفة غير موجودة');
-    if (!envelopeSnap.exists) throw const ServerException('ظرف الاستلام غير موجود');
+    if (!envelopeSnap.exists)
+      throw const ServerException('ظرف الاستلام غير موجود');
 
     final loanData = loanSnap.data()!;
     final remaining = (loanData['remainingBalance'] as num?)?.toDouble() ?? 0.0;
-    final employeeName = (loanData['employeeName'] as String?)?.trim() ?? 'موظف';
+    final employeeName =
+        (loanData['employeeName'] as String?)?.trim() ?? 'موظف';
 
     if (amount > remaining) {
       throw OperationRejectedException(
@@ -616,7 +632,8 @@ class FinancialOperationsService {
     final envelope = envelopeSnap.data()!;
     final envelopeBalance =
         (envelope['currentBalance'] as num?)?.toDouble() ?? 0.0;
-    final callerName = (userSnap.data()?['name'] as String?)?.trim() ?? 'مستخدم';
+    final callerName =
+        (userSnap.data()?['name'] as String?)?.trim() ?? 'مستخدم';
 
     final newRemaining = remaining - amount;
     final now = FieldValue.serverTimestamp();

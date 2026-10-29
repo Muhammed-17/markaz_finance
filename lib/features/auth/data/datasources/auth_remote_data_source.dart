@@ -22,6 +22,9 @@ class AuthRemoteDataSource {
   final FirebaseFirestore _firestore;
   final ConnectivityService _connectivity;
 
+  /// نسخة مشتركة تضمن ظهور اختيار الحساب في كل مرة (forceCodeForRefreshToken)
+  final _googleSignIn = GoogleSignIn(forceCodeForRefreshToken: true);
+
   CollectionReference<Map<String, dynamic>> get _usersCollection =>
       _firestore.collection(AppCollections.users);
 
@@ -84,7 +87,7 @@ class AuthRemoteDataSource {
   Future<UserModel> signInWithGoogle() async {
     await _ensureOnline();
     try {
-      final account = await GoogleSignIn().signIn();
+      final account = await _googleSignIn.signIn();
       if (account == null) {
         throw const OperationRejectedException(
           'تم إلغاء تسجيل الدخول عبر Google',
@@ -139,9 +142,14 @@ class AuthRemoteDataSource {
     }
   }
 
-  /// تسجيل الخروج.
+  /// تسجيل الخروج — يطهّر جلسة Google تمامًا حتى يظهر منتقي الحساب في الدخول التالي.
   Future<void> signOut() async {
     await _auth.signOut();
+    // disconnect() تزيل رمز التحديث وتجبر Google على عرض منتقي الحساب في المرة القادمة.
+    // نتجاهل الأخطاء إن لم تكن جلسة Google نشطة (مثلاً: تسجيل دخول بالبريد).
+    try {
+      await _googleSignIn.disconnect();
+    } catch (_) {}
   }
 
   Future<void> _ensureOnline() async {

@@ -130,6 +130,20 @@ service cloud.firestore {
 
     // ================= الفروع =================
 
+    // ================= التصنيفات المالية =================
+    match /categories/{categoryId} {
+      allow get, list: if callerExistsAndActive();
+      allow create: if (isAdmin() || hasFinancialPerm('approve'))
+        && createKeys(['name', 'type', 'createdAt'])
+        && isStr(request.resource.data.name, 2, 100)
+        && request.resource.data.type in ['income', 'expense']
+        && request.resource.data.createdAt is timestamp;
+      allow update: if (isAdmin() || hasFinancialPerm('approve'))
+        && onlyKeys(['name'])
+        && isStr(request.resource.data.name, 2, 100);
+      allow delete: if false;
+    }
+
     match /branches/{branchId} {
       allow get, list: if callerExistsAndActive();
       allow create: if isAdmin()
@@ -248,7 +262,7 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.amount == request.resource.data.currentBalance)
         )
         && isStr(request.resource.data.name, 3, 120)
-        && isStr(request.resource.data.purpose, 3, 500)
+        && isStr(request.resource.data.purpose, 0, 500)
         && request.resource.data.fundType in ['general', 'restricted']
         && request.resource.data.allowedExpenseCategories is list
         && request.resource.data.allowedExpenseCategories.size() <= 15
@@ -266,7 +280,7 @@ service cloud.firestore {
         (onlyKeys(['name', 'purpose', 'allowedExpenseCategories', 'centerId'])
           && hasFinancialPerm('update')
           && isStr(request.resource.data.name, 3, 120)
-          && isStr(request.resource.data.purpose, 3, 500)
+          && isStr(request.resource.data.purpose, 0, 500)
           && request.resource.data.allowedExpenseCategories is list
           && request.resource.data.allowedExpenseCategories.size() <= 15
           && (request.resource.data.centerId == null
@@ -347,12 +361,14 @@ service cloud.firestore {
         // أو حركات سلف آلية (employee_loan / loan_repayment) بمعرف سلفة
         && ((request.resource.data.employeeLoanId == null
               && ((request.resource.data.type == 'income'
-                    && request.resource.data.category in
-                       ['student_subscription', 'donation', 'other_income', 'opening_balance'])
+                    && (request.resource.data.category in
+                        ['student_subscription', 'donation', 'other_income', 'opening_balance']
+                        || exists(/databases/$(database)/documents/categories/$(request.resource.data.category))))
                   || (request.resource.data.type == 'expense'
-                      && request.resource.data.category in
-                         ['salaries', 'rent', 'utilities', 'maintenance', 'supplies',
-                          'quran_copies_purchase', 'fans_purchase', 'other_expense'])))
+                      && (request.resource.data.category in
+                          ['salaries', 'rent', 'utilities', 'maintenance', 'supplies',
+                           'quran_copies_purchase', 'fans_purchase', 'other_expense']
+                          || exists(/databases/$(database)/documents/categories/$(request.resource.data.category))))))
             || (isStr(request.resource.data.employeeLoanId, 1, 128)
                 && ((request.resource.data.type == 'expense'
                       && request.resource.data.category == 'employee_loan'

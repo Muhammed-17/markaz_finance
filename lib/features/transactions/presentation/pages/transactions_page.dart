@@ -8,6 +8,7 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/data/models/envelope_model.dart';
 import '../../../../core/data/models/transaction_model.dart';
+import '../../../../core/services/categories_service.dart';
 import '../../../../core/services/financial_operations_service.dart';
 import '../../../../core/services/permission_service.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -16,6 +17,7 @@ import '../../../../core/widgets/app_amount_text.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_error_view.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../widgets/month_field.dart' show categoryLabel;
 
 /// سجل الحركات النقدية الفعلي؛ البحث والتصفية محليان لتجنب فهارس مركبة جديدة.
 class TransactionsPage extends StatefulWidget {
@@ -560,9 +562,24 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     super.dispose();
   }
 
-  List<String> get _categories => _type == AppTransactionTypes.income
-      ? AppIncomeCategories.creatable
-      : AppExpenseCategories.creatable;
+  List<String> _categoriesFor(EnvelopeModel? envelope) {
+    if (_type == AppTransactionTypes.income) {
+      final customIncome = sl.isRegistered<CategoriesService>()
+          ? sl<CategoriesService>().incomeCategories.map((c) => c.id).toList()
+          : <String>[];
+      return {...AppIncomeCategories.creatable, ...customIncome}.toList();
+    }
+    // إذا كان الظرف مخصصاً، يسمح فقط بالتصنيفات المحددة له
+    if (envelope != null &&
+        envelope.fundType == AppFundTypes.restricted &&
+        envelope.allowedExpenseCategories.isNotEmpty) {
+      return envelope.allowedExpenseCategories;
+    }
+    final customExpense = sl.isRegistered<CategoriesService>()
+        ? sl<CategoriesService>().expenseCategories.map((c) => c.id).toList()
+        : <String>[];
+    return {...AppExpenseCategories.creatable, ...customExpense}.toList();
+  }
 
   Future<void> _save(List<EnvelopeModel> envelopes) async {
     if (!_formKey.currentState!.validate()) return;
@@ -572,6 +589,19 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     if (envelope == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('اختر ظرفًا ماليًا صالحًا.')),
+      );
+      return;
+    }
+    if (_type == AppTransactionTypes.expense &&
+        envelope.fundType == AppFundTypes.restricted &&
+        !envelope.allowedExpenseCategories.contains(_category)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'هذا الظرف مخصص ولا يسمح إلا بالتصنيفات التالية: '
+            '${envelope.allowedExpenseCategories.map(_categoryLabel).join("، ")}',
+          ),
+        ),
       );
       return;
     }
@@ -647,6 +677,14 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
               if (envelopes.isEmpty) {
                 return const Text('أنشئ ظرفًا ماليًا نشطًا أولًا لإضافة حركة.');
               }
+
+              final selectedEnvelopeIndex =
+                  envelopes.indexWhere((item) => item.id == _envelopeId);
+              final selectedEnvelope = selectedEnvelopeIndex == -1
+                  ? null
+                  : envelopes[selectedEnvelopeIndex];
+              final availableCategories = _categoriesFor(selectedEnvelope);
+
               return SingleChildScrollView(
                 child: Form(
                   key: _formKey,
@@ -684,23 +722,41 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
                           .map((item) => DropdownMenuItem(
                                 value: item.id,
                                 child: Text(
-                                    '${item.name} — ${AppFormatters.amount(item.currentBalance)}'),
+                                    '${item.name}${item.fundType == AppFundTypes.restricted ? " (مخصص)" : ""} — ${AppFormatters.amount(item.currentBalance)}'),
                               ))
                           .toList(),
                       validator: (value) => value == null ? 'اختر الظرف' : null,
                       onChanged: _saving
                           ? null
-                          : (value) => setState(() => _envelopeId = value),
+                          : (value) => setState(() {
+                                _envelopeId = value;
+                                final newEnv = envelopes.firstWhere(
+                                  (e) => e.id == value,
+                                  orElse: () => envelopes.first,
+                                );
+                                final allowed = _categoriesFor(newEnv);
+                                if (_category != null && !allowed.contains(_category)) {
+                                  _category = null;
+                                }
+                              }),
                     ),
                     const SizedBox(height: AppDimensions.spacing12),
                     DropdownButtonFormField<String>(
-                      key: ValueKey('category-$_type-$_category'),
-                      initialValue: _category,
-                      decoration: const InputDecoration(
+                      key: ValueKey(
+                          'category-$_type-$_envelopeId-$_category-${availableCategories.length}'),
+                      initialValue: availableCategories.contains(_category)
+                          ? _category
+                          : null,
+                      decoration: InputDecoration(
                         labelText: 'التصنيف',
-                        border: OutlineInputBorder(),
+                        helperText: _type == AppTransactionTypes.expense &&
+                                selectedEnvelope?.fundType ==
+                                    AppFundTypes.restricted
+                            ? 'ظرف مخصص: محصور في بنود الصرف المحددة له فقط'
+                            : null,
+                        border: const OutlineInputBorder(),
                       ),
-                      items: _categories
+                      items: availableCategories
                           .map((item) => DropdownMenuItem(
                                 value: item,
                                 child: Text(_categoryLabel(item)),
@@ -860,6 +916,7 @@ String _categoryLabel(String category) {
     case AppExpenseCategories.otherExpense:
       return 'مصروف آخر';
     default:
-      return category.isEmpty ? 'حركة مالية' : category;
+      if (category.isEmpty) return 'حركة مالية';
+      return categoryLabel(category);
   }
 }

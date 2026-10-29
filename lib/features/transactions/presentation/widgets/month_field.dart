@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:get_it/get_it.dart';
 
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/services/categories_service.dart';
 import '../../../../core/widgets/app_text_field.dart';
 
 /// دالة تحويل قيمة تصنيف نصية إلى تسمية عربية مقروءة.
 ///
 /// تُستخدم في شاشات التقارير، الأظرف، ولوحة التحكم لعرض التصنيف بشكل مناسب.
 String categoryLabel(String category) {
-  return switch (category) {
+  final label = switch (category) {
     // ── الإيرادات ──────────────────────────────────────────────────────────
     AppIncomeCategories.studentSubscription => 'اشتراكات الطلاب',
     AppIncomeCategories.donation            => 'تبرعات',
@@ -24,9 +26,16 @@ String categoryLabel(String category) {
     AppExpenseCategories.quranCopiesPurchase  => 'شراء مصاحف',
     AppExpenseCategories.fansPurchase         => 'شراء مراوح',
     AppExpenseCategories.otherExpense         => 'مصروفات أخرى',
-    // ── غير معرّف ─────────────────────────────────────────────────────────
-    _                                         => category,
+    // ── غير معرّف في الثوابت ──────────────────────────────────────────────
+    _                                         => null,
   };
+  if (label != null) return label;
+  try {
+    if (GetIt.instance.isRegistered<CategoriesService>()) {
+      return GetIt.instance<CategoriesService>().getLabel(category);
+    }
+  } catch (_) {}
+  return category;
 }
 
 /// حقل اختيار التصنيف المالي (إيرادات أو مصروفات) بناءً على قائمة ديناميكية.

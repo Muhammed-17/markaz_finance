@@ -10,6 +10,7 @@ abstract final class AppCollections {
   static const String employeeLoans = 'employeeLoans';
   static const String loanPayments = 'loanPayments';
   static const String loanLogs = 'loanLogs';
+  static const String categories = 'categories';
 
   /// أسماء صناديق Hive للتخزين المؤقت.
   static const String settingsBox = 'app_settings';
@@ -18,6 +19,7 @@ abstract final class AppCollections {
   static const String cacheBranchesBox = 'cache_branches';
   static const String cacheEnvelopesBox = 'cache_envelopes';
   static const String cacheUsersBox = 'cache_users';
+  static const String cacheCategoriesBox = 'cache_categories';
   static const String pendingOperationsBox = 'app_pending_operations';
 }
 
