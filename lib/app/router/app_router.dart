@@ -104,18 +104,20 @@ class _ShellPage extends StatelessWidget {
         icon: Icons.account_balance_wallet_rounded,
         selectedIcon: Icons.account_balance_wallet_rounded,
       ),
-      const AppNavItem(
-        path: RoutePaths.centers,
-        label: AppStrings.navCenters,
-        icon: Icons.account_balance_rounded,
-        selectedIcon: Icons.account_balance_rounded,
-      ),
-      const AppNavItem(
-        path: RoutePaths.branches,
-        label: AppStrings.navBranches,
-        icon: Icons.corporate_fare_rounded,
-        selectedIcon: Icons.corporate_fare_rounded,
-      ),
+      if (isAdmin)
+        const AppNavItem(
+          path: RoutePaths.centers,
+          label: AppStrings.navCenters,
+          icon: Icons.account_balance_rounded,
+          selectedIcon: Icons.account_balance_rounded,
+        ),
+      if (isAdmin)
+        const AppNavItem(
+          path: RoutePaths.branches,
+          label: AppStrings.navBranches,
+          icon: Icons.corporate_fare_rounded,
+          selectedIcon: Icons.corporate_fare_rounded,
+        ),
       if (isAdmin)
         const AppNavItem(
           path: RoutePaths.users,

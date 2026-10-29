@@ -444,7 +444,6 @@ class _PermissionsStrip extends StatelessWidget {
   final UserProfileEntity user;
 
   static const Map<String, (IconData, String)> _definitions = {
-    AppPermissions.view: (Icons.visibility_outlined, AppStrings.permissionView),
     AppPermissions.create: (
       Icons.add_circle_outline_rounded,
       AppStrings.permissionCreate

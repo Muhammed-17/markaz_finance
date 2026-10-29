@@ -615,8 +615,9 @@ class FinancialOperationsService {
     final userSnap = await tx.get(userRef);
 
     if (!loanSnap.exists) throw const ServerException('السلفة غير موجودة');
-    if (!envelopeSnap.exists)
+    if (!envelopeSnap.exists) {
       throw const ServerException('ظرف الاستلام غير موجود');
+    }
 
     final loanData = loanSnap.data()!;
     final remaining = (loanData['remainingBalance'] as num?)?.toDouble() ?? 0.0;

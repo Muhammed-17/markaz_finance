@@ -177,14 +177,6 @@ class _UserFormSheetState extends State<UserFormSheet> {
                 ),
                 const SizedBox(height: AppDimensions.spacing4),
                 _buildPermissionSwitch(
-                  title: AppStrings.permissionView,
-                  value: _role == AppRoles.admin ? true : _permissions.view,
-                  onChanged: _role == AppRoles.admin
-                      ? null
-                      : (value) => setState(() =>
-                          _permissions = _copyWithPermissions(view: value)),
-                ),
-                _buildPermissionSwitch(
                   title: AppStrings.permissionCreate,
                   value: _role == AppRoles.admin ? true : _permissions.create,
                   onChanged: _role == AppRoles.admin
@@ -270,14 +262,12 @@ class _UserFormSheetState extends State<UserFormSheet> {
   }
 
   FinancialPermissions _copyWithPermissions({
-    bool? view,
     bool? create,
     bool? update,
     bool? cancel,
     bool? approve,
   }) {
     return FinancialPermissions(
-      view: view ?? _permissions.view,
       create: create ?? _permissions.create,
       update: update ?? _permissions.update,
       cancel: cancel ?? _permissions.cancel,

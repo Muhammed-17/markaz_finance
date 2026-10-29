@@ -203,8 +203,7 @@ service cloud.firestore {
           && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
           && request.resource.data.role == 'user'
           && request.resource.data.financialPermissions.keys().hasOnly(
-              ['view', 'create', 'update', 'cancel', 'approve'])
-          && request.resource.data.financialPermissions.view == false
+              ['create', 'update', 'cancel', 'approve'])
           && request.resource.data.financialPermissions.create == false
           && request.resource.data.financialPermissions.update == false
           && request.resource.data.financialPermissions.cancel == false
@@ -308,7 +307,7 @@ service cloud.firestore {
 
     // ================= الحركات المالية (السجل النقدي الرئيسي) =================
     match /transactions/{transactionId} {
-      allow get, list: if hasFinancialPerm('view');
+      allow get, list: if callerExistsAndActive();
 
       // اقتران إلزامي: كل حركة نقدية نشطة يجب أن تغيّر رصيد ظرفها بنفس
       // أثرها تمامًا في نفس الدفعة (getAfter) — تمنع حركات يتيمة أو
@@ -403,7 +402,7 @@ service cloud.firestore {
 
     // ================= حركات الأظرف =================
     match /envelopeTransactions/{id} {
-      allow get, list: if hasFinancialPerm('view');
+      allow get, list: if callerExistsAndActive();
 
       // كل حركة ظرف مقرونة بتغيّر رصيد الظرف بنفس أثرها في نفس الدفعة
       function envTxPaired(d) {
@@ -501,7 +500,7 @@ service cloud.firestore {
 
     // ================= سلف الموظفين =================
     match /employeeLoans/{loanId} {
-      allow get, list: if hasFinancialPerm('view');
+      allow get, list: if callerExistsAndActive();
 
       // اقتران إلزامي بحركة صرف نقدية جديدة في نفس الدفعة
       function loanPairedWithDisbursement(d) {
@@ -552,7 +551,7 @@ service cloud.firestore {
 
     // ================= أقساط سداد السلف =================
     match /loanPayments/{paymentId} {
-      allow get, list: if hasFinancialPerm('view');
+      allow get, list: if callerExistsAndActive();
 
       // اقتران إلزامي بحركة نقدية مقبوضة جديدة في نفس الدفعة
       function loanPaymentPairedWithIncome(d) {

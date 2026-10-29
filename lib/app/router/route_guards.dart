@@ -29,7 +29,7 @@ abstract final class RouteGuards {
   /// - حالة مصادقة غير معروفة: انتظر في مكانك (شاشة انتظار).
   /// - غير مسجل: التوجيه إلى /login.
   /// - مسجل: منع العودة إلى /login والتوجيه إلى لوحة التحكم.
-  /// - مسار /users: للمديرين فقط.
+  /// - مسارات /users و/centers و/branches: للمديرين فقط.
   static String? redirect(
     GoRouterState state,
     AuthState authState,
@@ -48,8 +48,11 @@ abstract final class RouteGuards {
           if (loggingIn || location == RoutePaths.splash) {
             return RoutePaths.dashboard;
           }
-          // حماية صفحة المستخدمين: للمديرين فقط.
-          if (location.startsWith(RoutePaths.users) && !profile.isAdmin) {
+          // الصفحات الإدارية: للمديرين فقط، حتى عند فتح رابط مباشر.
+          if ((location.startsWith(RoutePaths.users) ||
+                  location.startsWith(RoutePaths.centers) ||
+                  location.startsWith(RoutePaths.branches)) &&
+              !profile.isAdmin) {
             return RoutePaths.dashboard;
           }
           return null;

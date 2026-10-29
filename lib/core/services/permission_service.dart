@@ -2,7 +2,7 @@ import '../constants/app_constants.dart';
 import '../domain/entities/user_entity.dart';
 
 /// إجراءات الصلاحيات المالية المعتمدة.
-enum PermissionAction { view, create, update, cancel, approve }
+enum PermissionAction { create, update, cancel, approve }
 
 /// خدمة مركزية للتحقق من الصلاحيات في العميل (لعرض/إخفاء عناصر الواجهة).
 ///
@@ -26,8 +26,6 @@ class PermissionService {
     if (user == null || !user.isActive) return false;
     if (user.role == AppRoles.admin) return true;
     switch (action) {
-      case PermissionAction.view:
-        return user.financialPermissions.view;
       case PermissionAction.create:
         return user.financialPermissions.create;
       case PermissionAction.update:

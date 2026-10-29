@@ -24,16 +24,9 @@ service firebase.storage {
         && userDoc().role == 'admin';
     }
 
-    // تحقق أن المستدعي يملك صلاحية عرض الحركات المالية أو مدير
-    function canViewFinancials() {
-      return isActiveUser()
-        && (userDoc().role == 'admin'
-            || (userDoc().financialPermissions != null && userDoc().financialPermissions.view == true));
-    }
-
     match /attachments/{folderName}/{fileName} {
-      // القراءة: لمن يملك صلاحية view أو المدير فقط — حماية للإيصالات والمستندات المالية
-      allow read: if canViewFinancials();
+      // القراءة: لكل مستخدم نشط، مثل بقية البيانات المالية.
+      allow read: if isActiveUser();
 
       // الكتابة: المستخدم النشط (لإرفاق الإيصالات عند إنشاء العمليات) + قيود الحجم والنوع
       allow write: if isActiveUser()

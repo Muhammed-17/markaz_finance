@@ -42,7 +42,7 @@ async function setupBaseData(customSetup) {
       name: 'محاسب المركز',
       role: 'user',
       isActive: true,
-      financialPermissions: { create: true, view: true, cancel: true, approve: false, update: false },
+      financialPermissions: { create: true, cancel: true, approve: false, update: false },
     });
 
     // مستخدم بصلاحية approve فقط
@@ -50,7 +50,7 @@ async function setupBaseData(customSetup) {
       name: 'مشرف القبول',
       role: 'user',
       isActive: true,
-      financialPermissions: { create: false, view: true, cancel: false, approve: true, update: false },
+      financialPermissions: { create: false, cancel: false, approve: true, update: false },
     });
 
     // مستخدم admin
@@ -58,7 +58,7 @@ async function setupBaseData(customSetup) {
       name: 'المدير',
       role: 'admin',
       isActive: true,
-      financialPermissions: { create: false, view: false, cancel: false, approve: false, update: false },
+      financialPermissions: { create: false, cancel: false, approve: false, update: false },
     });
 
     // مستخدم بدون صلاحية
@@ -66,7 +66,7 @@ async function setupBaseData(customSetup) {
       name: 'مستخدم عادي',
       role: 'user',
       isActive: true,
-      financialPermissions: { create: false, view: false, cancel: false, approve: false, update: false },
+      financialPermissions: { create: false, cancel: false, approve: false, update: false },
     });
 
     // مركز وظرفان نشطان
@@ -141,6 +141,12 @@ describe('1. حركات الأظرف الأساسية', () => {
     await setupBaseData();
     const clientDb = testEnv.unauthenticatedContext().firestore();
     await assertFails(clientDb.doc('transactions/any').get());
+  });
+
+  test('نجاح: المستخدم النشط يقرأ الحركات حتى بدون صلاحيات تنفيذ', async () => {
+    await setupBaseData();
+    const clientDb = testEnv.authenticatedContext('user_unauthorized').firestore();
+    await assertSucceeds(clientDb.doc('transactions/any').get());
   });
 });
 
@@ -407,7 +413,7 @@ describe('5. صلاحيات المستخدمين والتصعيد', () => {
       await adminDb.doc('users/target_user').set({
         name: 'مستخدم هدف', role: 'user', isActive: true,
         email: 'target@test.com',
-        financialPermissions: { create: false, view: false, cancel: false, approve: false, update: false },
+        financialPermissions: { create: false, cancel: false, approve: false, update: false },
       });
     });
 
@@ -431,7 +437,7 @@ describe('5. صلاحيات المستخدمين والتصعيد', () => {
     const clientDb = testEnv.authenticatedContext('user_unauthorized').firestore();
     await assertFails(
       clientDb.doc('users/user_unauthorized').update({
-        financialPermissions: { create: true, view: true, cancel: true, approve: true, update: true },
+        financialPermissions: { create: true, cancel: true, approve: true, update: true },
       })
     );
   });
@@ -441,7 +447,7 @@ describe('5. صلاحيات المستخدمين والتصعيد', () => {
       await adminDb.doc('users/target_user').set({
         name: 'مستخدم هدف', role: 'user', isActive: true,
         email: 'target@test.com',
-        financialPermissions: { create: false, view: false, cancel: false, approve: false, update: false },
+        financialPermissions: { create: false, cancel: false, approve: false, update: false },
       });
     });
 

@@ -5,29 +5,25 @@ import '../../constants/app_constants.dart';
 /// صلاحيات المستخدم المالية (مطابقة لحقل financialPermissions في Firestore).
 class FinancialPermissions extends Equatable {
   const FinancialPermissions({
-    this.view = false,
     this.create = false,
     this.update = false,
     this.cancel = false,
     this.approve = false,
   });
 
-  final bool view;
   final bool create;
   final bool update;
   final bool cancel;
   final bool approve;
 
   const FinancialPermissions.all()
-      : view = true,
-        create = true,
+      : create = true,
         update = true,
         cancel = true,
         approve = true;
 
   const FinancialPermissions.none()
-      : view = false,
-        create = false,
+      : create = false,
         update = false,
         cancel = false,
         approve = false;
@@ -35,7 +31,6 @@ class FinancialPermissions extends Equatable {
   factory FinancialPermissions.fromMap(Map<String, dynamic>? map) {
     bool flag(String key) => map?[key] == true;
     return FinancialPermissions(
-      view: flag(AppPermissions.view),
       create: flag(AppPermissions.create),
       update: flag(AppPermissions.update),
       cancel: flag(AppPermissions.cancel),
@@ -44,7 +39,6 @@ class FinancialPermissions extends Equatable {
   }
 
   Map<String, dynamic> toMap() => {
-        AppPermissions.view: view,
         AppPermissions.create: create,
         AppPermissions.update: update,
         AppPermissions.cancel: cancel,
@@ -57,7 +51,7 @@ class FinancialPermissions extends Equatable {
       );
 
   @override
-  List<Object?> get props => [view, create, update, cancel, approve];
+  List<Object?> get props => [create, update, cancel, approve];
 }
 
 /// كيان المستخدم — طبقة النطاق (Domain).

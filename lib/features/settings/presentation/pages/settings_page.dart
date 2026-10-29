@@ -92,7 +92,6 @@ class _ProfileSection extends StatelessWidget {
   final UserProfileEntity? profile;
 
   static const List<(PermissionAction, String)> _permissionLabels = [
-    (PermissionAction.view, AppStrings.permissionView),
     (PermissionAction.create, AppStrings.permissionCreate),
     (PermissionAction.update, AppStrings.permissionUpdate),
     (PermissionAction.cancel, AppStrings.permissionCancel),

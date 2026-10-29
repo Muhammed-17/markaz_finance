@@ -111,11 +111,6 @@ class _TransactionsPageState extends State<TransactionsPage> {
       builder: (context, authState) {
         final profile =
             authState is AuthAuthenticated ? authState.profile : null;
-        if (!PermissionService.can(profile, PermissionAction.view)) {
-          return const AppErrorView(
-            message: 'ليس لديك صلاحية عرض الحركات المالية.',
-          );
-        }
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection(AppCollections.transactions)

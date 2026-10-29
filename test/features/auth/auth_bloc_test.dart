@@ -52,7 +52,7 @@ void main() {
       );
 
   test('FinancialPermissions الافتراضية والكاملة تعمل', () {
-    expect(const FinancialPermissions.none().view, isFalse);
+    expect(const FinancialPermissions.none().create, isFalse);
     expect(const FinancialPermissions.all().create, isTrue);
     expect(_profile().isAdmin, isTrue);
     expect(_profile(isActive: false).isActive, isFalse);

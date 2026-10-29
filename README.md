@@ -110,7 +110,7 @@ firebase deploy --only firestore:rules,firestore:indexes,storage
   "email": "admin@example.com",
   "role": "admin",
   "financialPermissions": {
-    "view": true, "create": true, "update": true, "cancel": true, "approve": true
+    "create": true, "update": true, "cancel": true, "approve": true
   },
   "isActive": true
 }
