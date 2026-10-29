@@ -39,6 +39,7 @@ class HiveService {
     await _ensureBox(c.AppCollections.cacheBranchesBox);
     await _ensureBox(c.AppCollections.cacheEnvelopesBox);
     await _ensureBox(c.AppCollections.cacheUsersBox);
+    await _ensureBox(c.AppCollections.pendingOperationsBox);
   }
 
   Future<Box<dynamic>> _ensureBox(String name) async {

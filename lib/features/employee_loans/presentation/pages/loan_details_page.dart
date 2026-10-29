@@ -18,6 +18,7 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_dialogs.dart';
 import '../../../../core/widgets/app_error_view.dart';
 import '../../../../core/widgets/app_loading.dart';
+import '../../../../core/widgets/pending_operations_banner.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../domain/usecases/employee_loans_usecases.dart';
 import '../bloc/employee_loans_bloc.dart';
@@ -36,6 +37,7 @@ class LoanDetailsPage extends StatefulWidget {
 
 class _LoanDetailsPageState extends State<LoanDetailsPage> {
   late final Stream<List<EmployeeLoanEntity>> _loansStream;
+  late final EmployeeLoansBloc _loansBloc;
 
   List<LoanPaymentEntity> _payments = const [];
   List<LoanLogEntity> _logs = const [];
@@ -49,10 +51,17 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
   @override
   void initState() {
     super.initState();
+    _loansBloc = sl<EmployeeLoansBloc>();
     // بث ثابت يُنشأ مرة واحدة — لا يعاد الاشتراك فيه عند كل إعادة بناء.
     _loansStream = sl<WatchLoans>().call();
     _loadPayments();
     if (_canViewLogs) _loadLogs();
+  }
+
+  @override
+  void dispose() {
+    _loansBloc.close();
+    super.dispose();
   }
 
   UserProfileEntity? get _currentProfile {
@@ -124,7 +133,7 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
       builder: (sheetContext) {
         _openSheetNavigator = Navigator.of(sheetContext);
         return BlocProvider<EmployeeLoansBloc>.value(
-          value: context.read<EmployeeLoansBloc>(),
+          value: _loansBloc,
           child: LoanRepaySheet(loan: loan),
         );
       },
@@ -137,8 +146,8 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<EmployeeLoansBloc>(
-      create: (_) => sl<EmployeeLoansBloc>(),
+    return BlocProvider<EmployeeLoansBloc>.value(
+      value: _loansBloc,
       child: BlocConsumer<EmployeeLoansBloc, EmployeeLoansState>(
         listener: (context, state) {
           final message = state.message;
@@ -244,6 +253,7 @@ class _LoanDetailsBody extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(AppDimensions.pagePaddingMobile),
           children: [
+            const PendingOperationsBanner(),
             // ملخص السلفة
             _SummaryCard(loan: loan),
             const SizedBox(height: AppDimensions.itemSpacing),

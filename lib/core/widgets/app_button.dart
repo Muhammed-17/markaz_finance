@@ -75,8 +75,22 @@ class AppButton extends StatelessWidget {
                   Icon(icon, size: AppDimensions.iconMedium - 2),
                   const SizedBox(width: AppDimensions.spacing8),
                 ],
-                Flexible(
-                  child: Text(
+                if (isFullWidth)
+                  Flexible(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _isDisabled && variant != AppButtonVariant.text
+                            ? AppColors.surface
+                            : _foreground,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                else
+                  Text(
                     label,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -87,7 +101,6 @@ class AppButton extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
               ],
             ),
     );

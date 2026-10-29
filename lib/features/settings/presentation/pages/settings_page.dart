@@ -5,6 +5,7 @@ import '../../../../app/di/injection.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/domain/entities/user_entity.dart';
+import '../../../../core/services/pending_operations_service.dart';
 import '../../../../core/services/permission_service.dart';
 import '../../../../core/services/app_lock_service.dart';
 import '../../../../core/services/biometric_auth_service.dart';
@@ -238,11 +239,62 @@ class _StorageSection extends StatelessWidget {
   const _StorageSection();
 
   Future<void> _confirmClear(BuildContext context) async {
+    // التحقق من وجود عمليات معلقة قبل المسح
+    final pendingService = sl<PendingOperationsService>();
+    final pendingCount = pendingService.pendingCount;
+
+    if (pendingCount > 0 && context.mounted) {
+      // إبلاغ المستخدم بأن العمليات المعلقة لن تُمسح
+      final result = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: Theme.of(ctx).colorScheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  color: AppColors.warning, size: AppDimensions.iconMedium),
+              SizedBox(width: AppDimensions.spacing8),
+              Expanded(child: Text('عمليات مالية معلقة')),
+            ],
+          ),
+          content: Text(
+            'لديك ($pendingCount) '
+            '${pendingCount == 1 ? 'عملية معلقة' : 'عمليات معلقة'} '
+            'بانتظار عودة الإنترنت.\n\n'
+            'لن يتم مسحها حفاظًا على بياناتك المالية، '
+            'وستتم مزامنتها تلقائيًا فور عودة الاتصال.\n\n'
+            'سيُمسح فقط: ذاكرة التخزين المؤقت للقوائم (المراكز، الفروع، الظروف، المستخدمين).',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('فهمت، إلغاء'),
+            ),
+            AppButton(
+              label: 'مسح الكاش فقط',
+              icon: Icons.cleaning_services_rounded,
+              variant: AppButtonVariant.secondary,
+              isFullWidth: false,
+              onPressed: () => Navigator.of(ctx).pop('confirm'),
+            ),
+          ],
+        ),
+      );
+      if (result != 'confirm') return;
+      if (!context.mounted) return;
+      context.read<SettingsCubit>().clearCache();
+      return;
+    }
+
+    // لا توجد عمليات معلقة — حوار التأكيد المعتاد
     final confirmed = await showAppConfirmDialog(
       context,
       title: 'مسح البيانات المؤقتة',
       message:
-          'سيتم مسح المسودات المحفوظة محليًا وذاكرة التخزين المؤقت للقوائم. '
+          'سيتم مسح ذاكرة التخزين المؤقت للقوائم (المراكز، الفروع، الظروف، المستخدمين). '
           'لا يؤثر ذلك على بيانات الخادم أو الأرصدة المالية.',
       confirmLabel: 'مسح',
       isDanger: true,

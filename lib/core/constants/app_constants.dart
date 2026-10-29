@@ -18,6 +18,7 @@ abstract final class AppCollections {
   static const String cacheBranchesBox = 'cache_branches';
   static const String cacheEnvelopesBox = 'cache_envelopes';
   static const String cacheUsersBox = 'cache_users';
+  static const String pendingOperationsBox = 'app_pending_operations';
 }
 
 /// أدوار المستخدمين (String وليس enum في قاعدة البيانات).

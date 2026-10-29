@@ -17,8 +17,8 @@ class BiometricAuthService {
       return _authentication.authenticate(
         localizedReason: 'تحقق بالبصمة لفتح التطبيق',
         options: const AuthenticationOptions(
-          biometricOnly: true,
-          stickyAuth: true,
+          biometricOnly: false,
+          stickyAuth: false,
         ),
       );
     } catch (_) {

@@ -522,21 +522,36 @@ class FinancialOperationsService {
   ) async {
     final loanId = data['loanId'] as String?;
     final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+    final envelopeId = data['envelopeId'] as String?;
+    final requestId = (data['requestId'] as String?)?.trim() ??
+        'req_${DateTime.now().millisecondsSinceEpoch}';
+    final notes = (data['notes'] as String?)?.trim() ?? '';
 
     if (loanId == null || loanId.isEmpty) {
-      throw const ValidationException('معرّف القرض مطلوب');
+      throw const ValidationException('معرّف السلفة مطلوب');
     }
     if (amount <= 0) {
       throw const ValidationException('مبلغ السداد يجب أن يكون أكبر من صفر');
     }
+    if (envelopeId == null || envelopeId.isEmpty) {
+      throw const ValidationException('اختر ظرف استلام المبلغ');
+    }
 
+    // جميع القراءات أولاً قبل أي عملية كتابة (شرط أساسي لمعاملات Firestore)
     final loanRef = _firestore.collection('employeeLoans').doc(loanId);
-    final loanSnap = await tx.get(loanRef);
+    final envelopeRef = _firestore.collection('fundEnvelopes').doc(envelopeId);
+    final userRef = _firestore.collection('users').doc(uid);
 
-    if (!loanSnap.exists) throw const ServerException('القرض غير موجود');
+    final loanSnap = await tx.get(loanRef);
+    final envelopeSnap = await tx.get(envelopeRef);
+    final userSnap = await tx.get(userRef);
+
+    if (!loanSnap.exists) throw const ServerException('السلفة غير موجودة');
+    if (!envelopeSnap.exists) throw const ServerException('ظرف الاستلام غير موجود');
 
     final loanData = loanSnap.data()!;
     final remaining = (loanData['remainingBalance'] as num?)?.toDouble() ?? 0.0;
+    final employeeName = (loanData['employeeName'] as String?)?.trim() ?? 'موظف';
 
     if (amount > remaining) {
       throw OperationRejectedException(
@@ -544,16 +559,92 @@ class FinancialOperationsService {
       );
     }
 
+    final envelope = envelopeSnap.data()!;
+    final envelopeBalance =
+        (envelope['currentBalance'] as num?)?.toDouble() ?? 0.0;
+    final callerName = (userSnap.data()?['name'] as String?)?.trim() ?? 'مستخدم';
+
     final newRemaining = remaining - amount;
     final now = FieldValue.serverTimestamp();
 
+    // 1. تحديث السلفة (الحقول المسموح بها في firestore.rules حصرًا: remainingBalance و status بدون أي حقول أخرى)
     tx.update(loanRef, <String, dynamic>{
       'remainingBalance': newRemaining,
       'status': newRemaining <= 0 ? 'paid_off' : 'active',
-      'updatedAt': now,
     });
 
-    return {};
+    // 2. زيادة رصيد ظرف الاستلام
+    tx.update(envelopeRef, <String, dynamic>{
+      'currentBalance': envelopeBalance + amount,
+    });
+
+    // 3. إنشاء الحركة المالية النقدية (transactions) المقترنة بزيادة رصيد الظرف
+    final transactionRef = _firestore.collection('transactions').doc();
+    tx.set(transactionRef, <String, dynamic>{
+      'centerId': envelope['centerId'],
+      'branchId': null,
+      'envelopeId': envelopeId,
+      'type': 'income',
+      'category': 'loan_repayment',
+      'name': 'سداد سلفة: $employeeName',
+      'amount': amount,
+      'paymentMethod': 'cash',
+      'forMonth': null,
+      'status': 'active',
+      'employeeLoanId': loanId,
+      'attachmentPaths': <String>[],
+      'notes': notes,
+      'createdAt': now,
+    });
+
+    // 4. إنشاء حركة الظرف المقترنة (envelopeTransactions)
+    final envelopeTransactionRef =
+        _firestore.collection('envelopeTransactions').doc();
+    tx.set(envelopeTransactionRef, <String, dynamic>{
+      'envelopeId': envelopeId,
+      'transactionId': transactionRef.id,
+      'type': 'income',
+      'amount': amount,
+      'notes': notes,
+      'createdBy': uid,
+      'createdAt': now,
+    });
+
+    // 5. إنشاء سجل قسط السداد (loanPayments)
+    final paymentRef = _firestore.collection('loanPayments').doc();
+    tx.set(paymentRef, <String, dynamic>{
+      'loanId': loanId,
+      'paidAmount': amount,
+      'paymentDate': now,
+      'transactionId': transactionRef.id,
+      'requestId': requestId,
+      'notes': notes,
+    });
+
+    // 6. إنشاء سجل تدقيق السلفة (loanLogs)
+    final logRef = _firestore.collection('loanLogs').doc();
+    tx.set(logRef, <String, dynamic>{
+      'loanId': loanId,
+      'actionType': newRemaining <= 0 ? 'PAYOFF' : 'PAYMENT',
+      'performedBy': uid,
+      'performedByName': callerName,
+      'oldValues': <String, dynamic>{
+        'remainingBalance': remaining,
+        'status': loanData['status'],
+      },
+      'newValues': <String, dynamic>{
+        'remainingBalance': newRemaining,
+        'status': newRemaining <= 0 ? 'paid_off' : 'active',
+      },
+      'reason': notes.isEmpty ? 'سداد سلفة' : notes,
+      'timestamp': now,
+    });
+
+    return {
+      'loanId': loanId,
+      'paymentId': paymentRef.id,
+      'transactionId': transactionRef.id,
+    };
   }
 
   Future<Map<String, dynamic>> _createUser(
@@ -599,15 +690,23 @@ class FinancialOperationsService {
 
   /// تحويل رموز أخطاء Firebase إلى رسائل عربية واضحة.
   static String _mapFirebaseError(FirebaseException e) {
-    return switch (e.code) {
-      'permission-denied' => 'ليس لديك صلاحية تنفيذ هذه العملية',
-      'not-found' => 'السجل المطلوب غير موجود',
-      'already-exists' => 'السجل موجود مسبقًا',
-      'resource-exhausted' => 'تجاوزت حصة الطلبات، حاول لاحقًا',
-      'unavailable' => 'الخدمة غير متاحة حاليًا، حاول مرة أخرى',
-      'deadline-exceeded' => 'انتهت مهلة العملية، حاول مرة أخرى',
-      'aborted' => 'تعارض في البيانات، حدّث وأعد المحاولة',
-      _ => 'خطأ في الخادم: ${e.message ?? e.code}',
-    };
+    switch (e.code) {
+      case 'permission-denied':
+        return 'ليس لديك صلاحية تنفيذ هذه العملية';
+      case 'not-found':
+        return 'السجل المطلوب غير موجود';
+      case 'already-exists':
+        return 'السجل موجود مسبقًا';
+      case 'resource-exhausted':
+        return 'تجاوزت حصة الطلبات، حاول لاحقًا';
+      case 'unavailable':
+        return 'الخدمة غير متاحة حاليًا، حاول مرة أخرى';
+      case 'deadline-exceeded':
+        return 'انتهت مهلة العملية، حاول مرة أخرى';
+      case 'aborted':
+        return 'تعارض في البيانات، حدّث وأعد المحاولة';
+      default:
+        return 'خطأ في الخادم: ${e.message ?? e.code}';
+    }
   }
 }

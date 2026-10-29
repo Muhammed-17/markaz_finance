@@ -4,6 +4,7 @@ import '../../core/network/connectivity_service.dart';
 import '../../core/services/financial_operations_service.dart';
 import '../../core/services/firebase_service.dart';
 import '../../core/services/hive_service.dart';
+import '../../core/services/pending_operations_service.dart';
 import '../../features/auth/di/auth_injection.dart';
 import '../../features/branches/di/branches_injection.dart';
 import '../../features/centers/di/centers_injection.dart';
@@ -42,6 +43,12 @@ Future<void> configureDependencies() async {
     ),
   );
   sl.registerLazySingleton<HiveService>(() => hiveService);
+  sl.registerLazySingleton<PendingOperationsService>(
+    () => PendingOperationsService(
+      connectivityService: sl<ConnectivityService>(),
+      financialOperationsService: sl<FinancialOperationsService>(),
+    ),
+  );
 
   // 3) الميزات (تسجيل مستقل لكل ميزة).
   registerAuthFeature(sl);

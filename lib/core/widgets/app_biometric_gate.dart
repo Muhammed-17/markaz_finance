@@ -3,8 +3,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../features/auth/presentation/bloc/auth_bloc.dart';
 import '../constants/app_colors.dart';
+import '../constants/app_dimensions.dart';
 import '../services/app_lock_service.dart';
 import '../services/biometric_auth_service.dart';
+import '../theme/app_typography.dart';
 
 /// يغطي التطبيق بالكامل عند وجود جلسة مستخدم، بما في ذلك أي مسار يصل من
 /// إشعار. ويعاد قفله بمجرد انتقال التطبيق للخلفية.
@@ -26,6 +28,8 @@ class _AppBiometricGateState extends State<AppBiometricGate>
   bool _wasAuthenticated = false;
   bool _lockEnabled = false;
   bool _loadingPreference = false;
+  bool _dismissedBiometric = false;
+  bool _wasPaused = false;
   String? _userId;
 
   @override
@@ -42,17 +46,21 @@ class _AppBiometricGateState extends State<AppBiometricGate>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
+    if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      // نافذة البصمة الأصلية تُرسل inactive/resumed. لا تعاملها كخروج
-      // من التطبيق وإلا أُعيد القفل فور نجاح التحقق.
-      if (!_authenticating && _lockEnabled) _lock();
+      // تم الخروج الفعلي من التطبيق إلى الخلفية.
+      if (!_authenticating && _lockEnabled) {
+        _wasPaused = true;
+        _lock();
+      }
     } else if (state == AppLifecycleState.resumed && _wasAuthenticated) {
-      // لا تعِد قراءة التفضيل هنا: نافذة البصمة نفسها تغيّر دورة حياة التطبيق،
-      // وإعادة القراءة كانت تعيد قفل الشاشة فور نجاح التحقق، فتسبب حلقة.
-      if (_authenticating) return;
-      if (_lockEnabled && _locked) _requestAuthentication();
+      // عند العودة من الخلفية: إذا لم يكن المستخدم قد ألغى البصمة يدويًا،
+      // ولم تكن المصادقة جارية بالفعل، نطلب التحقق.
+      if (_wasPaused && _lockEnabled && _locked && !_authenticating && !_dismissedBiometric) {
+        _wasPaused = false;
+        _requestAuthentication();
+      }
+      _wasPaused = false;
     }
   }
 
@@ -66,6 +74,7 @@ class _AppBiometricGateState extends State<AppBiometricGate>
       _wasAuthenticated = false;
       _userId = null;
       _lockEnabled = false;
+      _dismissedBiometric = false;
       if (_locked != false) return;
       setState(() => _locked = false);
       return;
@@ -87,22 +96,34 @@ class _AppBiometricGateState extends State<AppBiometricGate>
     setState(() {
       _loadingPreference = false;
       _lockEnabled = enabled;
-      // لا نعرض قفل البصمة مطلقًا قبل معرفة أن المستخدم فعّله فعليًا.
       _locked = enabled;
+      _dismissedBiometric = false;
     });
     if (enabled) _requestAuthentication();
   }
 
-  Future<void> _requestAuthentication() async {
+  Future<void> _requestAuthentication({bool userTriggered = false}) async {
     if (!_wasAuthenticated || !_lockEnabled || !_locked || _authenticating) {
       return;
     }
-    setState(() => _authenticating = true);
+    setState(() {
+      _authenticating = true;
+      if (userTriggered) _dismissedBiometric = false;
+    });
+
     final success = await _biometric.authenticate();
     if (!mounted) return;
+
     setState(() {
       _authenticating = false;
-      if (success) _locked = false;
+      if (success) {
+        _locked = false;
+        _dismissedBiometric = false;
+      } else {
+        // عند إلغاء المستخدم للنافذة أو فشل البصمة، نثبت حالة الإلغاء
+        // حتى لا يعيد النظام فتح نافذة البصمة تلقائيًا في حلقة لا تنتهي.
+        _dismissedBiometric = true;
+      }
     });
   }
 
@@ -110,7 +131,12 @@ class _AppBiometricGateState extends State<AppBiometricGate>
     final userId = _userId;
     if (userId == null) return false;
     final success = await _appLock.verifyPasscode(userId, passcode);
-    if (success && mounted) setState(() => _locked = false);
+    if (success && mounted) {
+      setState(() {
+        _locked = false;
+        _dismissedBiometric = false;
+      });
+    }
     return success;
   }
 
@@ -133,7 +159,7 @@ class _AppBiometricGateState extends State<AppBiometricGate>
               if (authenticated && _lockEnabled && _locked)
                 _LockScreen(
                   isAuthenticating: _authenticating,
-                  onRetry: _requestAuthentication,
+                  onRetry: () => _requestAuthentication(userTriggered: true),
                   onVerifyPasscode: _verifyPasscode,
                 ),
             ],
@@ -161,52 +187,91 @@ class _LockScreen extends StatelessWidget {
       color: AppColors.primary,
       child: SafeArea(
         child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.fingerprint_rounded,
-                color: AppColors.textOnPrimary,
-                size: 72,
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'التطبيق مقفل',
-                style: TextStyle(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppDimensions.pagePaddingMobile,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.fingerprint_rounded,
                   color: AppColors.textOnPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
+                  size: 72,
                 ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'استخدم البصمة للمتابعة',
-                style: TextStyle(color: AppColors.textOnPrimary),
-              ),
-              const SizedBox(height: 28),
-              FilledButton.icon(
-                onPressed: isAuthenticating ? null : onRetry,
-                icon: isAuthenticating
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.fingerprint_rounded),
-                label: Text(
-                    isAuthenticating ? 'جارٍ التحقق...' : 'التحقق بالبصمة'),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: isAuthenticating
-                    ? null
-                    : () => _showPasscodeDialog(context),
-                child: const Text(
-                  'استخدام كلمة مرور التطبيق',
+                const SizedBox(height: 20),
+                const Text(
+                  'التطبيق مقفل',
+                  style: TextStyle(
+                    color: AppColors.textOnPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'استخدم البصمة أو رمز المرور للمتابعة',
                   style: TextStyle(color: AppColors.textOnPrimary),
+                  textAlign: TextAlign.center,
                 ),
-              ),
-            ],
+                const SizedBox(height: 28),
+                FilledButton.icon(
+                  onPressed: isAuthenticating ? null : onRetry,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.surface,
+                    foregroundColor: AppColors.primary,
+                    minimumSize: const Size(220, AppDimensions.buttonHeight),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(AppDimensions.radiusMedium),
+                    ),
+                  ),
+                  icon: isAuthenticating
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fingerprint_rounded),
+                  label: Text(
+                    isAuthenticating ? 'جارٍ التحقق...' : 'التحقق بالبصمة',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: isAuthenticating
+                      ? null
+                      : () => _showPasscodeDialog(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.textOnPrimary,
+                    side: const BorderSide(color: AppColors.textOnPrimary),
+                    minimumSize: const Size(220, AppDimensions.buttonHeight),
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(AppDimensions.radiusMedium),
+                    ),
+                  ),
+                  icon: const Icon(Icons.pin_rounded),
+                  label: const Text('استخدام رمز مرور التطبيق'),
+                ),
+                const SizedBox(height: 16),
+                TextButton.icon(
+                  onPressed: isAuthenticating
+                      ? null
+                      : () {
+                          context
+                              .read<AuthBloc>()
+                              .add(const AuthSignOutRequested());
+                        },
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.textOnPrimary.withValues(alpha: 0.85),
+                  ),
+                  icon: const Icon(Icons.logout_rounded, size: 18),
+                  label: const Text('تسجيل الخروج والدخول بكلمة المرور'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -218,27 +283,44 @@ class _LockScreen extends StatelessWidget {
     var invalid = false;
     await showDialog<void>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('كلمة مرور التطبيق'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            obscureText: true,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: 'أدخل كلمة المرور',
-              errorText: invalid ? 'كلمة المرور غير صحيحة' : null,
-            ),
-            onSubmitted: (_) async {
-              final valid = await onVerifyPasscode(controller.text);
-              if (valid && dialogContext.mounted) {
-                Navigator.of(dialogContext).pop();
-              } else if (dialogContext.mounted) {
-                setDialogState(() => invalid = true);
-              }
-            },
+          backgroundColor: AppColors.surface,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
+          ),
+          title: const Text('رمز مرور التطبيق', style: AppTypography.titleMedium),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'أدخل رمز المرور الذي حددته في الإعدادات:',
+                style: AppTypography.bodySmall,
+              ),
+              const SizedBox(height: AppDimensions.spacing16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'رمز المرور',
+                  errorText: invalid ? 'رمز المرور غير صحيح' : null,
+                  prefixIcon: const Icon(Icons.lock_outline_rounded),
+                ),
+                onSubmitted: (_) async {
+                  final valid = await onVerifyPasscode(controller.text);
+                  if (valid && dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                  } else if (dialogContext.mounted) {
+                    setDialogState(() => invalid = true);
+                  }
+                },
+              ),
+            ],
           ),
           actions: [
             TextButton(

@@ -7,6 +7,9 @@ import 'app_button.dart';
 import 'app_text_field.dart';
 
 /// حوار تأكيد موحد.
+///
+/// [useRootNavigator]: ضعها true عند الاستدعاء من داخل BottomSheet لتجنب
+/// الشاشة الرمادية الفارغة الناتجة عن navigator الـ sheet المعزول.
 Future<bool> showAppConfirmDialog(
   BuildContext context, {
   required String title,
@@ -14,13 +17,20 @@ Future<bool> showAppConfirmDialog(
   String confirmLabel = 'تأكيد',
   String cancelLabel = 'إلغاء',
   bool isDanger = false,
+  bool useRootNavigator = false,
 }) async {
   final result = await showDialog<bool>(
     context: context,
+    useRootNavigator: useRootNavigator,
     barrierColor: AppColors.overlayBarrier,
     builder: (dialogContext) => AlertDialog(
-      title: Text(title),
-      content: Text(message),
+      backgroundColor: AppColors.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
+      ),
+      title: Text(title, style: AppTypography.titleMedium),
+      content: Text(message, style: AppTypography.bodyMedium),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -40,21 +50,30 @@ Future<bool> showAppConfirmDialog(
 
 /// حوار إدخال سبب إلزامي (يُستخدم عند إلغاء حركة مالية مثلًا).
 /// يرجع السبب النصي أو null إذا تم الإلغاء.
+///
+/// [useRootNavigator]: ضعها true عند الاستدعاء من داخل BottomSheet.
 Future<String?> showAppReasonDialog(
   BuildContext context, {
   required String title,
   required String message,
   String confirmLabel = 'إلغاء الحركة',
+  bool useRootNavigator = false,
 }) async {
   final controller = TextEditingController();
   final formKey = GlobalKey<FormState>();
 
   final result = await showDialog<String>(
     context: context,
+    useRootNavigator: useRootNavigator,
     barrierColor: AppColors.overlayBarrier,
     builder: (dialogContext) => StatefulBuilder(
       builder: (dialogContext, setState) => AlertDialog(
-        title: Text(title),
+        backgroundColor: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
+        ),
+        title: Text(title, style: AppTypography.titleMedium),
         content: Form(
           key: formKey,
           autovalidateMode: AutovalidateMode.onUserInteraction,

@@ -1,10 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
+import '../../../../core/data/models/pending_operation_model.dart';
 import '../../../../core/domain/entities/employee_loan_entity.dart';
 import '../../../../core/domain/entities/envelope_entity.dart';
+import '../../../../core/network/connectivity_service.dart';
+import '../../../../core/services/pending_operations_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/utils/money.dart';
@@ -21,8 +28,8 @@ import '../bloc/employee_loans_bloc.dart';
 
 /// نافذة تسجيل سداد لسلفة موظف.
 ///
-/// التحقق المحلي (المبلغ > 0 و<= المتبقي) لتحسين التجربة فقط —
-/// والتحقق النهائي ذري على الخادم مع requestId فريد يولَّد عند الإرسال.
+/// عند توفر الإنترنت: تسجيل فوري عبر المعاملة الذرية.
+/// عند انقطاع الإنترنت: حفظ كمسودة معلقة (Offline Draft) تُرسل تلقائيًا عند عودة الاتصال.
 class LoanRepaySheet extends StatefulWidget {
   const LoanRepaySheet({required this.loan, super.key});
 
@@ -41,15 +48,23 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
   bool _isLoadingEnvelopes = true;
   String? _envelopesFailure;
   String? _envelopeId;
+  bool _isOnline = true;
+  StreamSubscription<bool>? _connectivitySub;
 
   @override
   void initState() {
     super.initState();
+    _isOnline = sl<ConnectivityService>().isOnline;
+    _connectivitySub =
+        sl<ConnectivityService>().onConnectivityChanged.listen((online) {
+      if (mounted) setState(() => _isOnline = online);
+    });
     _loadEnvelopes();
   }
 
   @override
   void dispose() {
+    _connectivitySub?.cancel();
     _amountController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -82,6 +97,51 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
         double.tryParse(_amountController.text.trim().replaceAll(',', ''));
     if (amount == null || amount <= 0) return;
 
+    // في وضع عدم الاتصال: حفظ كمسودة معلقة في Hive
+    if (!_isOnline) {
+      final confirmed = await showAppConfirmDialog(
+        context,
+        title: 'حفظ كمسودة سداد معلقة',
+        message: 'أنت غير متصل بالإنترنت حاليًا. سيتم حفظ السداد بمبلغ '
+            '${AppFormatters.amount(amount)} كمسودة معلقة على هذا الجهاز، '
+            'ولن يتغير رصيد السلفة أو الظرف حتى تتوفر الشبكة وتتم المزامنة. '
+            'هل تريد المتابعة؟',
+        confirmLabel: 'حفظ كمسودة',
+        useRootNavigator: true,
+      );
+      if (!confirmed || !mounted) return;
+
+      final requestId = const Uuid().v4();
+      final notes = _notesController.text.trim().isEmpty
+          ? null
+          : _notesController.text.trim();
+
+      final pendingOp = PendingOperationModel(
+        id: const Uuid().v4(),
+        type: AppFunctions.repayLoan,
+        title:
+            'سداد سلفة: ${widget.loan.employeeName} (${AppFormatters.amount(amount)})',
+        payload: <String, dynamic>{
+          'loanId': widget.loan.id,
+          'amount': amount,
+          'envelopeId': _envelopeId!,
+          'requestId': requestId,
+          'notes': notes,
+        },
+        createdAt: DateTime.now(),
+      );
+
+      await sl<PendingOperationsService>().saveOperation(pendingOp);
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        message:
+            'تم حفظ العملية كمسودة معلقة — ستتم المزامنة تلقائيًا فور توفر الإنترنت',
+      );
+      Navigator.of(context).pop();
+      return;
+    }
+
     final confirmed = await showAppConfirmDialog(
       context,
       title: 'تأكيد السداد',
@@ -89,6 +149,7 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
           'الموظف "${widget.loan.employeeName}" واستلام المبلغ نقدًا في '
           'الظرف المختار. هل تريد المتابعة؟',
       confirmLabel: 'تسجيل السداد',
+      useRootNavigator: true,
     );
     if (!confirmed || !mounted) return;
 
@@ -218,42 +279,72 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
                   ),
                   const SizedBox(height: AppDimensions.itemSpacing),
 
-                  // تنبيه آلية السداد ومنع التكرار
-                  Container(
-                    padding: const EdgeInsets.all(AppDimensions.spacing12),
-                    decoration: BoxDecoration(
-                      color: AppColors.infoLight,
-                      borderRadius: BorderRadius.circular(
-                        AppDimensions.radiusMedium,
+                  // تنبيه آلية السداد أو وضع عدم الاتصال
+                  if (!_isOnline)
+                    Container(
+                      padding: const EdgeInsets.all(AppDimensions.spacing12),
+                      decoration: BoxDecoration(
+                        color: AppColors.warningLight,
+                        borderRadius: BorderRadius.circular(
+                          AppDimensions.radiusMedium,
+                        ),
+                      ),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.wifi_off_rounded,
+                            size: AppDimensions.iconMedium,
+                            color: AppColors.warning,
+                          ),
+                          SizedBox(width: AppDimensions.spacing8),
+                          Expanded(
+                            child: Text(
+                              'أنت غير متصل بالإنترنت حاليًا. سيتم حفظ السداد كمسودة معلقة تُرسل تلقائيًا فور عودة الاتصال دون التأثير على الأرصدة حتى اعتمادها.',
+                              style: AppTypography.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.all(AppDimensions.spacing12),
+                      decoration: BoxDecoration(
+                        color: AppColors.infoLight,
+                        borderRadius: BorderRadius.circular(
+                          AppDimensions.radiusMedium,
+                        ),
+                      ),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: AppDimensions.iconMedium,
+                            color: AppColors.info,
+                          ),
+                          SizedBox(width: AppDimensions.spacing8),
+                          Expanded(
+                            child: Text(
+                              'سيخصم المبلغ من المتبقي ويزيد رصيد الظرف المختار — '
+                              'منع التكرار مضمون على الخادم عبر requestId',
+                              style: AppTypography.bodySmall,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    child: const Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.info_outline_rounded,
-                          size: AppDimensions.iconMedium,
-                          color: AppColors.info,
-                        ),
-                        SizedBox(width: AppDimensions.spacing8),
-                        Expanded(
-                          child: Text(
-                            'سيخصم المبلغ من المتبقي ويزيد رصيد الظرف المختار — '
-                            'منع التكرار مضمون على الخادم عبر requestId',
-                            style: AppTypography.bodySmall,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                   const SizedBox(height: AppDimensions.sectionSpacing),
 
                   AppButton(
-                    label: 'تسجيل السداد',
+                    label: _isOnline ? 'تسجيل السداد' : 'حفظ كمسودة سداد معلقة',
                     onPressed:
                         (_envelopeId == null || isSubmitting) ? null : _submit,
                     isLoading: isSubmitting,
-                    icon: Icons.payments_rounded,
+                    icon: _isOnline
+                        ? Icons.payments_rounded
+                        : Icons.save_as_rounded,
                   ),
                   const SizedBox(height: AppDimensions.spacing8),
                   AppButton(
