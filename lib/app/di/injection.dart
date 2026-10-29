@@ -3,6 +3,7 @@ import 'package:get_it/get_it.dart';
 import '../../core/network/connectivity_service.dart';
 import '../../core/services/financial_operations_service.dart';
 import '../../core/services/firebase_service.dart';
+import '../../core/services/hive_encryption_service.dart';
 import '../../core/services/hive_service.dart';
 import '../../core/services/pending_operations_service.dart';
 import '../../features/auth/di/auth_injection.dart';
@@ -21,7 +22,10 @@ final sl = GetIt.instance;
 
 Future<void> configureDependencies() async {
   // 0) Hive: التخزين المحلي المؤقت (ليس مصدرًا موثوقًا للأرصدة أو الصلاحيات).
-  final hiveService = HiveService();
+  //    يُهيَّأ مفتاح التشفير أولاً من flutter_secure_storage
+  //    ثم يُفتح pendingOperationsBox بمشفّر AES-256.
+  final encryptionService = HiveEncryptionService();
+  final hiveService = HiveService(encryptionService: encryptionService);
   await hiveService.init();
   await hiveService.openDefaultBoxes();
 

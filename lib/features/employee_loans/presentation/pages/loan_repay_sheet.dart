@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:uuid/uuid.dart';
@@ -111,13 +112,17 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
       );
       if (!confirmed || !mounted) return;
 
+      // id يُولَّد مرة واحدة هنا ويُستخدم كـ requestId لمنع التكرار على الخادم.
+      // إنشاؤه عند الحفظ (لا عند التنفيذ) يضمن نفس المعرّف في كل محاولة إعادة إرسال.
       final requestId = const Uuid().v4();
+      final ownerUid = FirebaseAuth.instance.currentUser?.uid ?? '';
       final notes = _notesController.text.trim().isEmpty
           ? null
           : _notesController.text.trim();
 
       final pendingOp = PendingOperationModel(
-        id: const Uuid().v4(),
+        id: requestId, // id === requestId: معرّف واحد لمنع التكرار
+        ownerUid: ownerUid,
         type: AppFunctions.repayLoan,
         title:
             'سداد سلفة: ${widget.loan.employeeName} (${AppFormatters.amount(amount)})',

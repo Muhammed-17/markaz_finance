@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -79,13 +80,23 @@ class PendingOperationsService {
     _notify();
   }
 
-  /// محاولة مزامنة كل المسودات المعلقة بالترتيب الزمني (FIFO)
+  /// محاولة مزامنة كل المسودات المعلقة الخاصة بالمستخدم الحالي بالترتيب الزمني (FIFO).
+  ///
+  /// يُصفّي حسب [ownerUid] لمنع تنفيذ عمليات مستخدم آخر بجلسة المستخدم الحالي.
   Future<void> syncAll() async {
     if (_isSyncing || !_connectivity.isOnline) return;
+
+    // تححق من المستخدم الحالي قبل أي عملية
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return; // لا جلسة نشطة
+
     _isSyncing = true;
     _notify();
 
-    final operations = allOperations;
+    // تصفية حسب ownerUid: عمليات المستخدم الحالي فقط
+    final operations =
+        allOperations.where((op) => op.ownerUid == currentUid).toList();
+
     for (final op in operations) {
       // تحديث الحالة إلى syncing
       final syncingOp = op.copyWith(

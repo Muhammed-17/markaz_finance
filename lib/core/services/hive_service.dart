@@ -5,6 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../constants/app_constants.dart' as c;
 import '../errors/exceptions.dart';
+import 'hive_encryption_service.dart';
 
 /// غلاف مركزي لخدمة Hive — التخزين المحلي المؤقت فقط.
 ///
@@ -12,9 +13,14 @@ import '../errors/exceptions.dart';
 /// 1) Hive ليس مصدرًا موثوقًا للأرصدة المالية أو الصلاحيات إطلاقًا.
 /// 2) لا تُخزَّن كلمات المرور أو الرموز الحساسة هنا.
 /// 3) بيانات المستخدم الحساسة تُمسح عند تسجيل الخروج.
+/// 4) [pendingOperationsBox] مشفَّر بـ AES-256 لحماية البيانات المالية الحساسة.
 class HiveService {
+  HiveService({required HiveEncryptionService encryptionService})
+      : _encryption = encryptionService;
+
   static const String _cachedAtKey = '__cachedAt';
 
+  final HiveEncryptionService _encryption;
   bool _initialized = false;
   final Map<String, Box<dynamic>> _openBoxes = {};
 
@@ -32,6 +38,8 @@ class HiveService {
   }
 
   /// فتح الصناديق المطلوبة مسبقًا (يُستدعى مرة عند الإقلاع).
+  ///
+  /// [pendingOperationsBox] يُفتح بمشفّر AES-256 لحماية البيانات المالية الحساسة.
   Future<void> openDefaultBoxes() async {
     await _ensureBox(c.AppCollections.settingsBox);
     await _ensureBox(c.AppCollections.draftsBox);
@@ -39,11 +47,19 @@ class HiveService {
     await _ensureBox(c.AppCollections.cacheBranchesBox);
     await _ensureBox(c.AppCollections.cacheEnvelopesBox);
     await _ensureBox(c.AppCollections.cacheUsersBox);
-    await _ensureBox(c.AppCollections.pendingOperationsBox);
+    // الطابور يحتوي على مبالغ ومعرفات مالية — يُفتح بمشفّر AES-256
+    final cipher = await _encryption.getOrCreateCipher();
+    await _ensureBox(c.AppCollections.pendingOperationsBox, encryptionCipher: cipher);
   }
 
-  Future<Box<dynamic>> _ensureBox(String name) async {
-    final box = await Hive.openBox<dynamic>(name);
+  Future<Box<dynamic>> _ensureBox(
+    String name, {
+    HiveCipher? encryptionCipher,
+  }) async {
+    final box = await Hive.openBox<dynamic>(
+      name,
+      encryptionCipher: encryptionCipher,
+    );
     _openBoxes[name] = box;
     return box;
   }

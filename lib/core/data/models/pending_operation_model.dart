@@ -13,9 +13,13 @@ enum PendingOperationStatus {
 }
 
 /// نموذج العملية المعلقة للتخزين في Hive عند العمل بدون اتصال.
+///
+/// يحمل [ownerUid] ضمانًا بأن العملية لا تُزامَن إلا بواسطة صاحبها الأصلي،
+/// مما يحمي من تنفيذ عمليات مستخدم سابق بجلسة مستخدم آخر على نفس الجهاز.
 class PendingOperationModel extends Equatable {
   const PendingOperationModel({
     required this.id,
+    required this.ownerUid,
     required this.type,
     required this.title,
     required this.payload,
@@ -24,8 +28,11 @@ class PendingOperationModel extends Equatable {
     this.failureReason,
   });
 
-  /// معرف محلي فريد للعملية
+  /// معرف محلي فريد للعملية (= requestId المُرسَل للخادم لمنع التكرار)
   final String id;
+
+  /// uid المستخدم الذي أنشأ هذه المسودة — لضمان عدم تنفيذها بجلسة مستخدم آخر
+  final String ownerUid;
 
   /// اسم العملية المتوافق مع AppFunctions (مثل: repayLoan, createEmployeeLoan)
   final String type;
@@ -47,6 +54,7 @@ class PendingOperationModel extends Equatable {
 
   Map<String, dynamic> toMap() => {
         'id': id,
+        'ownerUid': ownerUid,
         'type': type,
         'title': title,
         'payload': payload,
@@ -58,6 +66,7 @@ class PendingOperationModel extends Equatable {
   factory PendingOperationModel.fromMap(Map<String, dynamic> map) {
     return PendingOperationModel(
       id: map['id'] as String,
+      ownerUid: map['ownerUid'] as String? ?? '',
       type: map['type'] as String,
       title: map['title'] as String,
       payload: Map<String, dynamic>.from(map['payload'] as Map),
@@ -77,6 +86,7 @@ class PendingOperationModel extends Equatable {
   }) {
     return PendingOperationModel(
       id: id,
+      ownerUid: ownerUid,
       type: type,
       title: title,
       payload: payload,
@@ -89,5 +99,5 @@ class PendingOperationModel extends Equatable {
 
   @override
   List<Object?> get props =>
-      [id, type, title, payload, createdAt, status, failureReason];
+      [id, ownerUid, type, title, payload, createdAt, status, failureReason];
 }
