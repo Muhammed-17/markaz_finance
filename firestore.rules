@@ -363,7 +363,7 @@ service cloud.firestore {
                         && request.resource.data.category == 'loan_repayment'
                         && exists(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId))
                         && get(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId)).data.status == 'active'
-                        && get(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId)).data.remainingBalance >= request.resource.data.amount))))
+                        && math.abs((get(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId)).data.remainingBalance - getAfter(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId)).data.remainingBalance) - request.resource.data.amount) < 0.005))))
         // المركز: موجود — والفرع: موجود وينتمي له
         && (request.resource.data.centerId == null
             || (isStr(request.resource.data.centerId, 1, 128)
