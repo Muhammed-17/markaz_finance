@@ -1,0 +1,25 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+  language:
+    strict-casts: true
+    strict-inference: false
+    strict-raw-types: false
+  errors:
+    invalid_annotation_target: ignore
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_locals: true
+    avoid_print: true
+    unnecessary_string_interpolations: true
+    use_key_in_widget_constructors: true
+    avoid_unnecessary_containers: true
+    sort_child_properties_last: true
+    no_logic_in_create_state: true
+    use_build_context_synchronously: true

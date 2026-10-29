@@ -1,0 +1,446 @@
+rules_version = '2';
+
+// =================================================================================
+// قواعد أمان Firestore — نظام إدارة مراكز تحفيظ القرآن الكريم
+// =================================================================================
+// البنية الجديدة (بدون Cloud Functions — خطة مجانية):
+// - العمليات المالية تُنفَّذ من التطبيق عبر معاملات Firestore الذرية
+//   (FinancialOperationsService) بتحقق كامل قبل الكتابة.
+// - هذه القواعد هي خط الدفاع الخادمي الدائم: تُنفَّذ على خوادم Firebase
+//   حتى لو خُرق تطبيق العميل بالكامل، وتمنع:
+//     * أي كتابة من مستخدم غير مسجل أو معطل أو غير مخوّل.
+//     * أي حقول زائدة أو ناقصة أو بأنواع خاطئة في كل مجموعة.
+//     * رصيد ظرف سالب أو غير مرتبط بحركة ظرف بنفس الأثر (اقتران إلزامي).
+//     * تصنيفات غير معتمدة أو صرفًا من ظرف مخصص خارج قائمته.
+//     * تعديل أو حذف السجلات المالية وسجلات التدقيق بعد إنشائها.
+//     * أي مستخدم تعديل دوره أو صلاحياته بنفسه.
+// - ملاحظة حدود النموذج المجاني: تحديث رصيد الظرف وحده (currentBalance فقط)
+//   مسموح لصاحب صلاحية create/cancel ضمن معاملة — يجب إبقاء صلاحية create
+//   للموثوقين فقط، مع مراجعة التسوية الدورية بين envelopeTransactions
+//   والأرصدة للكشف عن أي انحراف.
+// ================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ================= دوال مساعدة عامة =================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // نص بطول ضمن الحدود
+    function isStr(v, minLen, maxLen) {
+      return v is string && v.size() >= minLen && v.size() <= maxLen;
+    }
+
+    // مبلغ موجب (حتى مليار) — دقة المنزلتين يتحقق منها التطبيق قبل الكتابة
+    function isAmount(v) {
+      return v is number && v > 0 && v <= 1000000000;
+    }
+
+    // رصيد غير سالب (حتى مليار)
+    function isBalance(v) {
+      return v is number && v >= 0 && v <= 1000000000;
+    }
+
+    // مفاتيح الحقول عند الإنشاء: مطابقة تامة (لا زيادة ولا نقصان)
+    function createKeys(keys) {
+      return request.resource.data.keys().hasOnly(keys)
+        && request.resource.data.keys().hasAll(keys);
+    }
+
+    // المفاتيح المتغيرة عند التحديث: مجموعة فرعية من المسموح فقط
+    function onlyKeys(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function isKeyChanged(key) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([key]);
+    }
+
+    // الصلاحية المالية من الملف الموثوق (admin يملك الكل ضمنيًا)
+    function hasPerm(profile, action) {
+      return profile.isActive == true
+        && (profile.role == 'admin' || profile.financialPermissions[action] == true);
+    }
+
+    // ملف المستدعي الموثوق — يُقرأ من users/{uid} ولا يُؤخذ من العميل
+    function callerProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function callerExistsAndActive() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && callerProfile().isActive == true;
+    }
+
+    function isAdmin() {
+      return callerExistsAndActive() && callerProfile().role == 'admin';
+    }
+
+    function hasFinancialPerm(action) {
+      return callerExistsAndActive() && hasPerm(callerProfile(), action);
+    }
+
+    // ================= المراكز =================
+
+    match /centers/{centerId} {
+      allow get, list: if callerExistsAndActive();
+      allow create: if isAdmin()
+        && createKeys(['name', 'description', 'createdAt', 'updatedAt'])
+        && isStr(request.resource.data.name, 2, 200)
+        && request.resource.data.description is string;
+      allow update: if isAdmin()
+        && onlyKeys(['name', 'description', 'updatedAt'])
+        && isStr(request.resource.data.name, 2, 200)
+        && request.resource.data.description is string;
+      allow delete: if false;
+    }
+
+    // ================= الفروع =================
+
+    match /branches/{branchId} {
+      allow get, list: if callerExistsAndActive();
+      allow create: if isAdmin()
+        && createKeys(['centerId', 'name', 'location', 'createdAt', 'updatedAt'])
+        && isStr(request.resource.data.centerId, 1, 128)
+        && isStr(request.resource.data.name, 2, 200)
+        && request.resource.data.location is string
+        && exists(/databases/$(database)/documents/centers/$(request.resource.data.centerId));
+      allow update: if isAdmin()
+        && onlyKeys(['centerId', 'name', 'location', 'updatedAt'])
+        && isStr(request.resource.data.centerId, 1, 128)
+        && isStr(request.resource.data.name, 2, 200)
+        && request.resource.data.location is string
+        && exists(/databases/$(database)/documents/centers/$(request.resource.data.centerId));
+      allow delete: if false;
+    }
+
+    // ================= المستخدمون =================
+    // القراءة: المستخدم مستنده فقط، والمدير الجميع.
+    // الإنشاء والتعديل لصاحب صلاحية approve — إنشاء الحساب المصادق يحدث عبر
+    // نسخة Firebase ثانوية من التطبيق ثم يُكتب هذا المستند. لا حذف إطلاقًا
+    // (التعطيل فقط عبر isActive)، ولا تعديل ذاتي للحقول الحساسة.
+    match /users/{userId} {
+      // القراءة: المستخدم مستنده فقط — والمدير أو صاحب صلاحية approve للجميع
+      // (شاشة إدارة المستخدمين تتطلب قراءة القائمة).
+      allow get: if signedIn()
+        && (request.auth.uid == userId || isAdmin() || hasFinancialPerm('approve'));
+      allow list: if isAdmin() || hasFinancialPerm('approve');
+
+      allow create: if (
+          hasFinancialPerm('approve')
+          && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
+          && isStr(request.resource.data.name, 3, 200)
+          && isStr(request.resource.data.email, 5, 320)
+          && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+          && request.resource.data.role in ['admin', 'user']
+          && request.resource.data.financialPermissions is map
+          && request.resource.data.isActive is bool
+        ) || (
+          // طلب Google الأول: لا يستطيع صاحبه منح أي دور أو صلاحية لنفسه.
+          signedIn()
+          && request.auth.uid == userId
+          && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
+          && isStr(request.resource.data.name, 1, 200)
+          && isStr(request.resource.data.email, 5, 320)
+          && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+          && request.resource.data.role == 'user'
+          && request.resource.data.financialPermissions.keys().hasOnly(
+              ['view', 'create', 'update', 'cancel', 'approve'])
+          && request.resource.data.financialPermissions.view == false
+          && request.resource.data.financialPermissions.create == false
+          && request.resource.data.financialPermissions.update == false
+          && request.resource.data.financialPermissions.cancel == false
+          && request.resource.data.financialPermissions.approve == false
+          && request.resource.data.isActive == false
+        );
+
+      allow update: if hasFinancialPerm('approve')
+        && onlyKeys(['name', 'role', 'financialPermissions', 'isActive'])
+        // حماية من التصعيد: لا تعديل الذات للدور/الصلاحيات/التفعيل
+        // (الاسم مسموح للذات فقط)
+        && (request.auth.uid != userId
+            || onlyKeys(['name']))
+        && (!isKeyChanged('name') || isStr(request.resource.data.name, 3, 200))
+        && (!isKeyChanged('role') || request.resource.data.role in ['admin', 'user'])
+        && (!isKeyChanged('financialPermissions')
+            || request.resource.data.financialPermissions is map)
+        && (!isKeyChanged('isActive') || request.resource.data.isActive is bool);
+
+      allow delete: if false;
+    }
+
+    // ================= الأظرف المالية =================
+    match /fundEnvelopes/{envelopeId} {
+      allow get, list: if callerExistsAndActive();
+
+      allow create: if hasFinancialPerm('create')
+        && createKeys(['name', 'purpose', 'fundType', 'allowedExpenseCategories',
+                       'currentBalance', 'centerId', 'status', 'createdAt'])
+        && isStr(request.resource.data.name, 3, 120)
+        && isStr(request.resource.data.purpose, 3, 500)
+        && request.resource.data.fundType in ['general', 'restricted']
+        && request.resource.data.allowedExpenseCategories is list
+        && request.resource.data.allowedExpenseCategories.size() <= 15
+        && isBalance(request.resource.data.currentBalance)
+        && request.resource.data.status == 'active'
+        && (request.resource.data.centerId == null
+            || (isStr(request.resource.data.centerId, 1, 128)
+                && exists(/databases/$(database)/documents/centers/$(request.resource.data.centerId))))
+        // الظرف المخصص يجب أن يحدد تصنيفات مسموحة
+        && (request.resource.data.fundType != 'restricted'
+            || request.resource.data.allowedExpenseCategories.size() > 0);
+
+      allow update: if (
+        // 1) بيانات وصفية فقط — صلاحية update
+        (onlyKeys(['name', 'purpose', 'allowedExpenseCategories', 'centerId'])
+          && hasFinancialPerm('update')
+          && isStr(request.resource.data.name, 3, 120)
+          && isStr(request.resource.data.purpose, 3, 500)
+          && request.resource.data.allowedExpenseCategories is list
+          && request.resource.data.allowedExpenseCategories.size() <= 15
+          && (request.resource.data.centerId == null
+              || (isStr(request.resource.data.centerId, 1, 128)
+                  && exists(/databases/$(database)/documents/centers/$(request.resource.data.centerId)))))
+        ||
+        // 2) أرشفة/إعادة تنشيط — صلاحية update + لا أرشفة برصيد غير صفري
+        (onlyKeys(['status'])
+          && hasFinancialPerm('update')
+          && request.resource.data.status in ['active', 'archived']
+          && (request.resource.data.status == 'active'
+              || resource.data.currentBalance == 0))
+        ||
+        // 3) تحديث الرصيد فقط — ضمن معاملة مالية ذرية (صلاحية create أو cancel)
+        (onlyKeys(['currentBalance'])
+          && (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
+          && isBalance(request.resource.data.currentBalance))
+      );
+
+      allow delete: if false;
+    }
+
+    // ================= الحركات المالية (السجل النقدي الرئيسي) =================
+    match /transactions/{transactionId} {
+      allow get, list: if hasFinancialPerm('view');
+
+      // اقتران إلزامي: كل حركة نقدية نشطة يجب أن تغيّر رصيد ظرفها بنفس
+      // أثرها تمامًا في نفس الدفعة (getAfter) — تمنع حركات يتيمة أو
+      // اختلال الأرصدة، وتفرض نشاط الظرف وقائمة الظرف المخصص.
+      // بوابة exists() أولًا لتفادي خطأ get() على ظرف جديد يُنشأ بنفس الدفعة.
+      function txnPaired(d) {
+        let envPath = /databases/$(database)/documents/fundEnvelopes/$(d.envelopeId);
+        return exists(envPath) && txnPairedExisting(envPath, d);
+      }
+
+      function txnPairedExisting(envPath, d) {
+        let pre = get(envPath).data;
+        let post = getAfter(envPath).data;
+        let delta = d.type == 'income' ? d.amount : -d.amount;
+        return pre.status == 'active'
+          && post.currentBalance >= 0
+          && post.currentBalance < 1000000000
+          && math.abs(post.currentBalance - (pre.currentBalance + delta)) < 0.005
+          && (d.type != 'expense'
+              || post.fundType != 'restricted'
+              || d.category in post.allowedExpenseCategories);
+      }
+
+      // حالة خاصة: رصيد افتتاحي مع إنشاء الظرف في نفس الدفعة
+      function txnOpeningBalancePaired(d) {
+        let envPath = /databases/$(database)/documents/fundEnvelopes/$(d.envelopeId);
+        return !exists(envPath)
+          && d.type == 'income'
+          && d.category == 'opening_balance'
+          && getAfter(envPath).data.currentBalance == d.amount;
+      }
+
+      allow create: if hasFinancialPerm('create')
+        && createKeys(['centerId', 'branchId', 'envelopeId', 'type', 'category',
+                       'name', 'amount', 'paymentMethod', 'forMonth', 'status',
+                       'employeeLoanId', 'attachmentPaths', 'notes', 'createdAt'])
+        && request.resource.data.type in ['income', 'expense']
+        && isStr(request.resource.data.name, 3, 200)
+        && isAmount(request.resource.data.amount)
+        && request.resource.data.paymentMethod in
+           ['cash', 'vodafone_cash', 'bank_transfer', 'cheque', 'other']
+        && request.resource.data.notes is string
+        && request.resource.data.attachmentPaths is list
+        && request.resource.data.attachmentPaths.size() <= 10
+        && (request.resource.data.forMonth == null
+            || (isStr(request.resource.data.forMonth, 7, 7)
+                && request.resource.data.forMonth.matches('^\\d{4}-(0[1-9]|1[0-2])$')))
+        && request.resource.data.status == 'active'
+        // التصنيفات: يدويًا من القوائم القابلة للإنشاء فقط،
+        // أو حركات سلف آلية (employee_loan / loan_repayment) بمعرف سلفة
+        && ((request.resource.data.employeeLoanId == null
+              && ((request.resource.data.type == 'income'
+                    && request.resource.data.category in
+                       ['student_subscription', 'donation', 'other_income', 'opening_balance'])
+                  || (request.resource.data.type == 'expense'
+                      && request.resource.data.category in
+                         ['salaries', 'rent', 'utilities', 'maintenance', 'supplies',
+                          'quran_copies_purchase', 'fans_purchase', 'other_expense'])))
+            || (isStr(request.resource.data.employeeLoanId, 1, 128)
+                && ((request.resource.data.type == 'expense'
+                      && request.resource.data.category == 'employee_loan')
+                    || (request.resource.data.type == 'income'
+                        && request.resource.data.category == 'loan_repayment'))))
+        // المركز: موجود — والفرع: موجود وينتمي له
+        && (request.resource.data.centerId == null
+            || (isStr(request.resource.data.centerId, 1, 128)
+                && exists(/databases/$(database)/documents/centers/$(request.resource.data.centerId))))
+        && (request.resource.data.branchId == null
+            || (isStr(request.resource.data.branchId, 1, 128)
+                && get(/databases/$(database)/documents/branches/$(request.resource.data.branchId)).data.centerId
+                    == request.resource.data.centerId))
+        && isStr(request.resource.data.envelopeId, 1, 128)
+        && (txnPaired(request.resource.data)
+            || txnOpeningBalancePaired(request.resource.data));
+
+      // الإلغاء فقط: تعديل حالة واحد من نشطة إلى ملغاة — صلاحية cancel
+      allow update: if hasFinancialPerm('cancel')
+        && onlyKeys(['status'])
+        && resource.data.status == 'active'
+        && request.resource.data.status == 'cancelled';
+
+      allow delete: if false;
+    }
+
+    // ================= حركات الأظرف =================
+    match /envelopeTransactions/{id} {
+      allow get, list: if hasFinancialPerm('view');
+
+      // كل حركة ظرف مقرونة بتغيّر رصيد الظرف بنفس أثرها في نفس الدفعة
+      function envTxSign(t) {
+        return (t == 'income' || t == 'allocation' || t == 'transfer_in' || t == 'refund')
+          ? 1 : -1;
+      }
+
+      function envTxPaired(d) {
+        let envPath = /databases/$(database)/documents/fundEnvelopes/$(d.envelopeId);
+        // تخصيص رصيد افتتاحي مع إنشاء الظرف في نفس الدفعة
+        return (d.type == 'allocation'
+            && !exists(envPath)
+            && getAfter(envPath).data.currentBalance == d.amount)
+          || (exists(envPath)
+            && envTxMatchesDelta(envPath, d));
+      }
+
+      function envTxMatchesDelta(envPath, d) {
+        let pre = get(envPath).data;
+        let post = getAfter(envPath).data;
+        let diff = post.currentBalance - pre.currentBalance;
+        // التسوية (adjustment) قد تكون بأي إشارة (تراجع إيراد أو مصروف ملغى)
+        return d.type == 'adjustment'
+          ? math.abs(math.abs(diff) - d.amount) < 0.005
+          : math.abs(diff - (envTxSign(d.type) * d.amount)) < 0.005;
+      }
+
+      allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
+        && createKeys(['envelopeId', 'transactionId', 'type', 'amount',
+                       'notes', 'createdBy', 'createdAt'])
+        && isStr(request.resource.data.envelopeId, 1, 128)
+        && (request.resource.data.transactionId == null
+            || isStr(request.resource.data.transactionId, 1, 128))
+        && request.resource.data.type in
+           ['income', 'expense', 'allocation', 'transfer_in',
+            'transfer_out', 'refund', 'adjustment']
+        && isAmount(request.resource.data.amount)
+        && request.resource.data.notes is string
+        && request.resource.data.createdBy == request.auth.uid
+        && envTxPaired(request.resource.data);
+
+      allow update, delete: if false;
+    }
+
+    // ================= سجلات تدقيق الحركات =================
+    // تُنشأ ضمن المعاملة فقط، ولا تُعدل أو تُحذف أبدًا.
+    match /transactionLogs/{logId} {
+      allow get, list: if hasFinancialPerm('cancel')
+        || hasFinancialPerm('approve') || isAdmin();
+
+      allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
+        && createKeys(['transactionId', 'centerId', 'actionType', 'modifiedBy',
+                       'modifiedByName', 'oldValues', 'newValues', 'reason', 'timestamp'])
+        && isStr(request.resource.data.transactionId, 1, 128)
+        && (request.resource.data.centerId == null
+            || isStr(request.resource.data.centerId, 1, 128))
+        && request.resource.data.actionType in ['CREATE', 'UPDATE', 'CANCEL']
+        && request.resource.data.modifiedBy == request.auth.uid
+        && request.resource.data.modifiedByName is string
+        && (request.resource.data.reason == null
+            || (request.resource.data.reason is string
+                && request.resource.data.reason.size() <= 500));
+
+      allow update, delete: if false;
+    }
+
+    // ================= سلف الموظفين =================
+    match /employeeLoans/{loanId} {
+      allow get, list: if hasFinancialPerm('view');
+
+      allow create: if hasFinancialPerm('create')
+        && createKeys(['employeeId', 'employeeName', 'totalAmount',
+                       'remainingBalance', 'status', 'notes', 'version'])
+        && (request.resource.data.employeeId == null
+            || isStr(request.resource.data.employeeId, 1, 128))
+        && isStr(request.resource.data.employeeName, 3, 200)
+        && isAmount(request.resource.data.totalAmount)
+        // المتبقي يبدأ مساويًا للإجمالي
+        && request.resource.data.remainingBalance == request.resource.data.totalAmount
+        && request.resource.data.status == 'active'
+        && request.resource.data.notes is string
+        && request.resource.data.version is number;
+
+      // التحديث عند السداد فقط: المتبقي والحالة — لا رجوع للخلف
+      allow update: if hasFinancialPerm('create')
+        && onlyKeys(['remainingBalance', 'status'])
+        && resource.data.status == 'active'
+        && isBalance(request.resource.data.remainingBalance)
+        && request.resource.data.remainingBalance <= resource.data.remainingBalance
+        && ((request.resource.data.remainingBalance > 0
+              && request.resource.data.status == 'active')
+            || (request.resource.data.remainingBalance == 0
+                && request.resource.data.status == 'paid_off'));
+
+      allow delete: if false;
+    }
+
+    // ================= أقساط سداد السلف =================
+    match /loanPayments/{paymentId} {
+      allow get, list: if hasFinancialPerm('view');
+
+      allow create: if hasFinancialPerm('create')
+        && createKeys(['loanId', 'paidAmount', 'paymentDate',
+                       'transactionId', 'requestId', 'notes'])
+        && isStr(request.resource.data.loanId, 1, 128)
+        && isAmount(request.resource.data.paidAmount)
+        && isStr(request.resource.data.transactionId, 1, 128)
+        // requestId إلزامي لمنع تكرار السداد
+        && isStr(request.resource.data.requestId, 8, 128)
+        && request.resource.data.notes is string;
+
+      allow update, delete: if false;
+    }
+
+    // ================= سجلات تدقيق السلف =================
+    match /loanLogs/{logId} {
+      allow get, list: if hasFinancialPerm('cancel')
+        || hasFinancialPerm('approve') || isAdmin();
+
+      allow create: if hasFinancialPerm('create')
+        && createKeys(['loanId', 'actionType', 'performedBy', 'performedByName',
+                       'oldValues', 'newValues', 'reason', 'timestamp'])
+        && isStr(request.resource.data.loanId, 1, 128)
+        && request.resource.data.actionType in
+           ['CREATE', 'UPDATE', 'PAYMENT', 'PAYOFF']
+        && request.resource.data.performedBy == request.auth.uid
+        && request.resource.data.performedByName is string;
+
+      allow update, delete: if false;
+    }
+  }
+}

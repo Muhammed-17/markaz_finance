@@ -1,0 +1,279 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_dimensions.dart';
+import '../../../../core/domain/entities/employee_loan_entity.dart';
+import '../../../../core/domain/entities/envelope_entity.dart';
+import '../../../../core/theme/app_typography.dart';
+import '../../../../core/utils/formatters.dart';
+import '../../../../core/utils/money.dart';
+import '../../../../core/utils/validators.dart';
+import '../../../../core/widgets/app_button.dart';
+import '../../../../core/widgets/app_dialogs.dart';
+import '../../../../core/widgets/app_error_view.dart';
+import '../../../../core/widgets/app_loading.dart';
+import '../../../../core/widgets/app_text_field.dart';
+import '../../../../app/di/injection.dart';
+import '../../../../core/constants/app_strings.dart';
+import '../../domain/repositories/employee_loans_repository.dart';
+import '../bloc/employee_loans_bloc.dart';
+
+/// نافذة تسجيل سداد لسلفة موظف.
+///
+/// التحقق المحلي (المبلغ > 0 و<= المتبقي) لتحسين التجربة فقط —
+/// والتحقق النهائي ذري على الخادم مع requestId فريد يولَّد عند الإرسال.
+class LoanRepaySheet extends StatefulWidget {
+  const LoanRepaySheet({required this.loan, super.key});
+
+  final EmployeeLoanEntity loan;
+
+  @override
+  State<LoanRepaySheet> createState() => _LoanRepaySheetState();
+}
+
+class _LoanRepaySheetState extends State<LoanRepaySheet> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _notesController = TextEditingController();
+
+  List<EnvelopeEntity> _envelopes = const [];
+  bool _isLoadingEnvelopes = true;
+  String? _envelopesFailure;
+  String? _envelopeId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEnvelopes();
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadEnvelopes() async {
+    setState(() {
+      _isLoadingEnvelopes = true;
+      _envelopesFailure = null;
+    });
+    final result = await sl<EmployeeLoansRepository>().getActiveEnvelopes();
+    if (!mounted) return;
+    result.fold(
+      (failure) => setState(() {
+        _isLoadingEnvelopes = false;
+        _envelopesFailure = failure.message;
+      }),
+      (envelopes) => setState(() {
+        _isLoadingEnvelopes = false;
+        _envelopes = envelopes;
+      }),
+    );
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_envelopeId == null) return;
+
+    final amount =
+        double.tryParse(_amountController.text.trim().replaceAll(',', ''));
+    if (amount == null || amount <= 0) return;
+
+    final confirmed = await showAppConfirmDialog(
+      context,
+      title: 'تأكيد السداد',
+      message: 'سيتم تسجيل سداد بمبلغ ${AppFormatters.amount(amount)} لسلفة '
+          'الموظف "${widget.loan.employeeName}" واستلام المبلغ نقدًا في '
+          'الظرف المختار. هل تريد المتابعة؟',
+      confirmLabel: 'تسجيل السداد',
+    );
+    if (!confirmed || !mounted) return;
+
+    context.read<EmployeeLoansBloc>().add(EmployeeLoansRepayRequested(
+          loanId: widget.loan.id,
+          amount: amount,
+          envelopeId: _envelopeId!,
+          notes: _notesController.text.trim().isEmpty
+              ? null
+              : _notesController.text.trim(),
+        ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<EmployeeLoansBloc, EmployeeLoansState>(
+      builder: (context, state) {
+        final isSubmitting = state.isSubmitting;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(AppDimensions.cardPaddingLarge),
+            child: Form(
+              key: _formKey,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: AppDimensions.bottomSheetHandleWidth,
+                      height: AppDimensions.bottomSheetHandleHeight,
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(
+                          AppDimensions.radiusSmall,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppDimensions.itemSpacing),
+                  const Text(
+                    'تسجيل سداد',
+                    style: AppTypography.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppDimensions.spacing4),
+                  Text(
+                    'سلفة الموظف: ${widget.loan.employeeName} — '
+                    'المتبقي: ${AppFormatters.amount(widget.loan.remainingBalance)}',
+                    style: AppTypography.bodySmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppDimensions.sectionSpacing),
+
+                  // المبلغ
+                  AppTextField(
+                    label: '${AppStrings.amount} (ج.م) *',
+                    controller: _amountController,
+                    hintText: '0.00',
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    enabled: !isSubmitting,
+                    validator: (v) {
+                      final base = AppValidators.amount(
+                        v,
+                        fieldName: 'مبلغ السداد',
+                      );
+                      if (base != null) return base;
+                      final parsed = double.tryParse(
+                        v?.trim().replaceAll(',', '') ?? '',
+                      );
+                      final remaining = widget.loan.remainingBalance;
+                      if (parsed != null &&
+                          Money.fromUnits(parsed) >
+                              Money.fromUnits(remaining)) {
+                        return 'مبلغ السداد يتجاوز المتبقي '
+                            '(${AppFormatters.amountCompact(remaining)})';
+                      }
+                      return null;
+                    },
+                    helperText: 'بحد أقصى منزلتين عشريتين',
+                  ),
+                  const SizedBox(height: AppDimensions.itemSpacing),
+
+                  // ظرف استلام المبلغ
+                  if (_isLoadingEnvelopes)
+                    const AppLoadingView(message: 'جارٍ تحميل الأظرف النشطة...')
+                  else if (_envelopesFailure != null)
+                    AppErrorView(
+                      message: _envelopesFailure!,
+                      isCompact: true,
+                      onRetry: _loadEnvelopes,
+                    )
+                  else
+                    AppDropdownField<String>(
+                      label: 'ظرف استلام المبلغ *',
+                      items: _envelopes
+                          .map((e) => DropdownMenuItem<String>(
+                                value: e.id,
+                                child: Text(
+                                  '${e.name} — الرصيد: ${AppFormatters.amountCompact(e.currentBalance)}',
+                                ),
+                              ))
+                          .toList(),
+                      value: _envelopeId,
+                      hint: _envelopes.isEmpty
+                          ? 'لا توجد أظرف نشطة'
+                          : 'اختر الظرف الذي استُلم فيه المبلغ',
+                      enabled: !isSubmitting && _envelopes.isNotEmpty,
+                      validator: (v) => v == null ? 'ظرف الاستلام مطلوب' : null,
+                      onChanged: (v) => setState(() => _envelopeId = v),
+                    ),
+                  const SizedBox(height: AppDimensions.itemSpacing),
+
+                  // الملاحظات
+                  AppTextField(
+                    label: AppStrings.notes,
+                    controller: _notesController,
+                    maxLines: 3,
+                    maxLength: 1000,
+                    enabled: !isSubmitting,
+                    validator: AppValidators.notes,
+                  ),
+                  const SizedBox(height: AppDimensions.itemSpacing),
+
+                  // تنبيه آلية السداد ومنع التكرار
+                  Container(
+                    padding: const EdgeInsets.all(AppDimensions.spacing12),
+                    decoration: BoxDecoration(
+                      color: AppColors.infoLight,
+                      borderRadius: BorderRadius.circular(
+                        AppDimensions.radiusMedium,
+                      ),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline_rounded,
+                          size: AppDimensions.iconMedium,
+                          color: AppColors.info,
+                        ),
+                        SizedBox(width: AppDimensions.spacing8),
+                        Expanded(
+                          child: Text(
+                            'سيخصم المبلغ من المتبقي ويزيد رصيد الظرف المختار — '
+                            'منع التكرار مضمون على الخادم عبر requestId',
+                            style: AppTypography.bodySmall,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppDimensions.sectionSpacing),
+
+                  AppButton(
+                    label: 'تسجيل السداد',
+                    onPressed:
+                        (_envelopeId == null || isSubmitting) ? null : _submit,
+                    isLoading: isSubmitting,
+                    icon: Icons.payments_rounded,
+                  ),
+                  const SizedBox(height: AppDimensions.spacing8),
+                  AppButton(
+                    label: AppStrings.cancel,
+                    variant: AppButtonVariant.text,
+                    onPressed:
+                        isSubmitting ? null : () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(height: AppDimensions.spacing8),
+                  const Text(
+                    AppStrings.serverOnlyWarning,
+                    style: AppTypography.labelSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
