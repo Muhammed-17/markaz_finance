@@ -1,0 +1,17 @@
+{
+  "name": "firestore-rules-tests",
+  "version": "1.0.0",
+  "description": "Automated security rules tests for Markaz Finance using @firebase/rules-unit-testing",
+  "scripts": {
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
+    "test:emulator": "firebase emulators:exec --only firestore \"npm test\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase-admin": "^13.1.0",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testTimeout": 30000
+  }
+}

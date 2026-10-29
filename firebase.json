@@ -1,1 +1,36 @@
-{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"storage":{"rules":"storage.rules"},"flutter":{"platforms":{"android":{"default":{"projectId":"markazfinance-72aeb","appId":"1:356510947238:android:5a91cd98d6689f1f18e167","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"markazfinance-72aeb","configurations":{"android":"1:356510947238:android:5a91cd98d6689f1f18e167"}}}}}}
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    },
+    "ui": {
+      "enabled": false
+    }
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "markazfinance-72aeb",
+          "appId": "1:356510947238:android:5a91cd98d6689f1f18e167",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "markazfinance-72aeb",
+          "configurations": {
+            "android": "1:356510947238:android:5a91cd98d6689f1f18e167"
+          }
+        }
+      }
+    }
+  }
+}

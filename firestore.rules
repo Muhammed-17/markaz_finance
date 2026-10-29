@@ -355,9 +355,15 @@ service cloud.firestore {
                           'quran_copies_purchase', 'fans_purchase', 'other_expense'])))
             || (isStr(request.resource.data.employeeLoanId, 1, 128)
                 && ((request.resource.data.type == 'expense'
-                      && request.resource.data.category == 'employee_loan')
+                      && request.resource.data.category == 'employee_loan'
+                      && !exists(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId))
+                      && existsAfter(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId))
+                      && getAfter(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId)).data.totalAmount == request.resource.data.amount)
                     || (request.resource.data.type == 'income'
-                        && request.resource.data.category == 'loan_repayment'))))
+                        && request.resource.data.category == 'loan_repayment'
+                        && exists(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId))
+                        && get(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId)).data.status == 'active'
+                        && get(/databases/$(database)/documents/employeeLoans/$(request.resource.data.employeeLoanId)).data.remainingBalance >= request.resource.data.amount))))
         // المركز: موجود — والفرع: موجود وينتمي له
         && (request.resource.data.centerId == null
             || (isStr(request.resource.data.centerId, 1, 128)
@@ -401,8 +407,18 @@ service cloud.firestore {
           && existsAfter(txnPath)
           && getAfter(txnPath).data.envelopeId == d.envelopeId
           && getAfter(txnPath).data.amount == d.amount
-          && ((d.type in ['income', 'expense'] && getAfter(txnPath).data.type == d.type)
-              || (d.type in ['refund', 'adjustment'] && getAfter(txnPath).data.status == 'cancelled'));
+          && (
+            // إنشاء: الحركة جديدة في هذه الدفعة
+            (d.type in ['income', 'expense']
+              && !exists(txnPath)
+              && getAfter(txnPath).data.type == d.type)
+            ||
+            // إلغاء: كانت نشطة قبل الدفعة وصارت ملغاة فيها، ونوعها عكس نوع حركة الظرف
+            (d.type in ['refund', 'adjustment']
+              && get(txnPath).data.status == 'active'
+              && getAfter(txnPath).data.status == 'cancelled'
+              && get(txnPath).data.type == (d.type == 'refund' ? 'expense' : 'income'))
+          );
       }
 
       // اقتران التحويل بين طرفيه (خروج ودخول) بمعرفات حتمية tr_xxx_out و tr_xxx_in
@@ -471,9 +487,22 @@ service cloud.firestore {
     match /employeeLoans/{loanId} {
       allow get, list: if hasFinancialPerm('view');
 
+      // اقتران إلزامي بحركة صرف نقدية جديدة في نفس الدفعة
+      function loanPairedWithDisbursement(d) {
+        let txnPath = /databases/$(database)/documents/transactions/$(d.disbursementTxnId);
+        return isStr(d.disbursementTxnId, 1, 128)
+          && !exists(txnPath)
+          && existsAfter(txnPath)
+          && getAfter(txnPath).data.type == 'expense'
+          && getAfter(txnPath).data.category == 'employee_loan'
+          && getAfter(txnPath).data.employeeLoanId == loanId
+          && getAfter(txnPath).data.amount == d.totalAmount;
+      }
+
       allow create: if hasFinancialPerm('create')
         && createKeys(['employeeId', 'employeeName', 'totalAmount',
-                       'remainingBalance', 'status', 'notes', 'version'])
+                       'remainingBalance', 'status', 'notes', 'version',
+                       'disbursementTxnId'])
         && (request.resource.data.employeeId == null
             || isStr(request.resource.data.employeeId, 1, 128))
         && isStr(request.resource.data.employeeName, 3, 200)
@@ -482,7 +511,8 @@ service cloud.firestore {
         && request.resource.data.remainingBalance == request.resource.data.totalAmount
         && request.resource.data.status == 'active'
         && request.resource.data.notes is string
-        && request.resource.data.version is number;
+        && request.resource.data.version is number
+        && loanPairedWithDisbursement(request.resource.data);
 
       // التحديث عند السداد فقط: المتبقي والحالة مقترنة بحركة سداد معتمدة
       allow update: if hasFinancialPerm('create')
@@ -492,6 +522,7 @@ service cloud.firestore {
         && isBalance(request.resource.data.remainingBalance)
         && request.resource.data.remainingBalance < resource.data.remainingBalance
         && isStr(request.resource.data.lastPaymentId, 8, 128)
+        && !exists(/databases/$(database)/documents/loanPayments/$(request.resource.data.lastPaymentId))
         && existsAfter(/databases/$(database)/documents/loanPayments/$(request.resource.data.lastPaymentId))
         && getAfter(/databases/$(database)/documents/loanPayments/$(request.resource.data.lastPaymentId)).data.loanId == loanId
         && math.abs((resource.data.remainingBalance - request.resource.data.remainingBalance) - getAfter(/databases/$(database)/documents/loanPayments/$(request.resource.data.lastPaymentId)).data.paidAmount) < 0.005
@@ -507,16 +538,30 @@ service cloud.firestore {
     match /loanPayments/{paymentId} {
       allow get, list: if hasFinancialPerm('view');
 
+      // اقتران إلزامي بحركة نقدية مقبوضة جديدة في نفس الدفعة
+      function loanPaymentPairedWithIncome(d) {
+        let txnPath = /databases/$(database)/documents/transactions/$(d.transactionId);
+        return isStr(d.transactionId, 1, 128)
+          && !exists(txnPath)
+          && existsAfter(txnPath)
+          && getAfter(txnPath).data.type == 'income'
+          && getAfter(txnPath).data.category == 'loan_repayment'
+          && getAfter(txnPath).data.employeeLoanId == d.loanId
+          && getAfter(txnPath).data.amount == d.paidAmount;
+      }
+
       allow create: if hasFinancialPerm('create')
         && createKeys(['loanId', 'paidAmount', 'paymentDate',
                        'transactionId', 'requestId', 'notes'])
         && paymentId == request.resource.data.requestId
         && !exists(/databases/$(database)/documents/loanPayments/$(paymentId))
         && isStr(request.resource.data.loanId, 1, 128)
+        && exists(/databases/$(database)/documents/employeeLoans/$(request.resource.data.loanId))
         && isAmount(request.resource.data.paidAmount)
         && isStr(request.resource.data.transactionId, 1, 128)
         && isStr(request.resource.data.requestId, 8, 128)
-        && request.resource.data.notes is string;
+        && request.resource.data.notes is string
+        && loanPaymentPairedWithIncome(request.resource.data);
 
       allow update, delete: if false;
     }

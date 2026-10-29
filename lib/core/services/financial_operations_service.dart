@@ -523,6 +523,7 @@ class FinancialOperationsService {
       'status': 'active',
       'notes': notes.trim(),
       'version': 1,
+      'disbursementTxnId': transactionRef.id,
     });
     tx.update(envelopeRef, <String, dynamic>{
       'currentBalance': balance - amount,
