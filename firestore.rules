@@ -394,6 +394,34 @@ service cloud.firestore {
             && envTxMatchesDelta(envPath, d));
       }
 
+      // اقتران إلزامي مع دفتر الحركات النقدية transactions لأنواع الحركات النقدية
+      function envTxPairedWithCashTxn(d) {
+        let txnPath = /databases/$(database)/documents/transactions/$(d.transactionId);
+        return isStr(d.transactionId, 1, 128)
+          && existsAfter(txnPath)
+          && getAfter(txnPath).data.envelopeId == d.envelopeId
+          && getAfter(txnPath).data.amount == d.amount
+          && ((d.type in ['income', 'expense'] && getAfter(txnPath).data.type == d.type)
+              || (d.type in ['refund', 'adjustment'] && getAfter(txnPath).data.status == 'cancelled'));
+      }
+
+      // اقتران التحويل بين طرفيه (خروج ودخول) بمعرفات حتمية tr_xxx_out و tr_xxx_in
+      function envTxPairedTransfer(id, d) {
+        return (d.type == 'transfer_out'
+            && id.matches('^.+_out$')
+            && existsAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 4] + '_in'))
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 4] + '_in')).data.type == 'transfer_in'
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 4] + '_in')).data.amount == d.amount
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 4] + '_in')).data.envelopeId != d.envelopeId)
+          ||
+          (d.type == 'transfer_in'
+            && id.matches('^.+_in$')
+            && existsAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 3] + '_out'))
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 3] + '_out')).data.type == 'transfer_out'
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 3] + '_out')).data.amount == d.amount
+            && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 3] + '_out')).data.envelopeId != d.envelopeId);
+      }
+
       allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
         && createKeys(['envelopeId', 'transactionId', 'type', 'amount',
                        'notes', 'createdBy', 'createdAt'])
@@ -406,7 +434,13 @@ service cloud.firestore {
         && isAmount(request.resource.data.amount)
         && request.resource.data.notes is string
         && request.resource.data.createdBy == request.auth.uid
-        && envTxPaired(request.resource.data);
+        && envTxPaired(request.resource.data)
+        // 1) الحركات النقدية تشترط وجود حركة نقدية مطابقة في transactions
+        && (!(request.resource.data.type in ['income', 'expense', 'refund', 'adjustment'])
+            || envTxPairedWithCashTxn(request.resource.data))
+        // 2) التحويل يشترط اقتران الطرفين transfer_in و transfer_out
+        && (!(request.resource.data.type in ['transfer_out', 'transfer_in'])
+            || envTxPairedTransfer(id, request.resource.data));
 
       allow update, delete: if false;
     }
@@ -450,12 +484,17 @@ service cloud.firestore {
         && request.resource.data.notes is string
         && request.resource.data.version is number;
 
-      // التحديث عند السداد فقط: المتبقي والحالة — لا رجوع للخلف
+      // التحديث عند السداد فقط: المتبقي والحالة مقترنة بحركة سداد معتمدة
       allow update: if hasFinancialPerm('create')
-        && onlyKeys(['remainingBalance', 'status'])
+        && onlyKeys(['remainingBalance', 'status', 'lastPaymentId'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasAll(['remainingBalance', 'status', 'lastPaymentId'])
         && resource.data.status == 'active'
         && isBalance(request.resource.data.remainingBalance)
-        && request.resource.data.remainingBalance <= resource.data.remainingBalance
+        && request.resource.data.remainingBalance < resource.data.remainingBalance
+        && isStr(request.resource.data.lastPaymentId, 8, 128)
+        && existsAfter(/databases/$(database)/documents/loanPayments/$(request.resource.data.lastPaymentId))
+        && getAfter(/databases/$(database)/documents/loanPayments/$(request.resource.data.lastPaymentId)).data.loanId == loanId
+        && math.abs((resource.data.remainingBalance - request.resource.data.remainingBalance) - getAfter(/databases/$(database)/documents/loanPayments/$(request.resource.data.lastPaymentId)).data.paidAmount) < 0.005
         && ((request.resource.data.remainingBalance > 0
               && request.resource.data.status == 'active')
             || (request.resource.data.remainingBalance == 0
@@ -471,10 +510,11 @@ service cloud.firestore {
       allow create: if hasFinancialPerm('create')
         && createKeys(['loanId', 'paidAmount', 'paymentDate',
                        'transactionId', 'requestId', 'notes'])
+        && paymentId == request.resource.data.requestId
+        && !exists(/databases/$(database)/documents/loanPayments/$(paymentId))
         && isStr(request.resource.data.loanId, 1, 128)
         && isAmount(request.resource.data.paidAmount)
         && isStr(request.resource.data.transactionId, 1, 128)
-        // requestId إلزامي لمنع تكرار السداد
         && isStr(request.resource.data.requestId, 8, 128)
         && request.resource.data.notes is string;
 

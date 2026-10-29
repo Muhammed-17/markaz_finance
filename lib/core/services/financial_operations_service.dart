@@ -300,8 +300,11 @@ class FinancialOperationsService {
 
     final toBalance = (toSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
     final now = FieldValue.serverTimestamp();
-    final fromEnvTxRef = _firestore.collection('envelopeTransactions').doc();
-    final toEnvTxRef = _firestore.collection('envelopeTransactions').doc();
+    final transferId = 'tr_${DateTime.now().millisecondsSinceEpoch}_${fromId}_$toId';
+    final fromEnvTxRef =
+        _firestore.collection('envelopeTransactions').doc('${transferId}_out');
+    final toEnvTxRef =
+        _firestore.collection('envelopeTransactions').doc('${transferId}_in');
 
     tx.update(fromRef, <String, dynamic>{
       'currentBalance': fromBalance - amount,
@@ -580,6 +583,17 @@ class FinancialOperationsService {
     final loanRef = _firestore.collection('employeeLoans').doc(loanId);
     final envelopeRef = _firestore.collection('fundEnvelopes').doc(envelopeId);
     final userRef = _firestore.collection('users').doc(uid);
+    final paymentRef = _firestore.collection('loanPayments').doc(requestId);
+
+    // فحص عدم تكرار السداد مسبقًا (Idempotency) لنفس requestId
+    final paymentSnap = await tx.get(paymentRef);
+    if (paymentSnap.exists) {
+      return {
+        'loanId': loanId,
+        'transactionId': paymentSnap.data()?['transactionId'] as String?,
+        'idempotent': true,
+      };
+    }
 
     final loanSnap = await tx.get(loanRef);
     final envelopeSnap = await tx.get(envelopeRef);
@@ -606,10 +620,11 @@ class FinancialOperationsService {
     final newRemaining = remaining - amount;
     final now = FieldValue.serverTimestamp();
 
-    // 1. تحديث السلفة (الحقول المسموح بها في firestore.rules حصرًا: remainingBalance و status بدون أي حقول أخرى)
+    // 1. تحديث السلفة مع ربطها بمعرف القسط lastPaymentId
     tx.update(loanRef, <String, dynamic>{
       'remainingBalance': newRemaining,
       'status': newRemaining <= 0 ? 'paid_off' : 'active',
+      'lastPaymentId': requestId,
     });
 
     // 2. إنشاء حركة الظرف المقترنة (envelopeTransactions)
@@ -651,8 +666,7 @@ class FinancialOperationsService {
       'createdAt': now,
     });
 
-    // 5. إنشاء سجل قسط السداد (loanPayments)
-    final paymentRef = _firestore.collection('loanPayments').doc();
+    // 5. إنشاء سجل قسط السداد (loanPayments) بمعرف requestId المحدد
     tx.set(paymentRef, <String, dynamic>{
       'loanId': loanId,
       'paidAmount': amount,
