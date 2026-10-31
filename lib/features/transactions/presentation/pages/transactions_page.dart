@@ -134,7 +134,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
       builder: (context, authState) {
         final profile =
             authState is AuthAuthenticated ? authState.profile : null;
-        if (!PermissionService.can(profile, PermissionAction.view)) {
+        if (!PermissionService.isActive(profile)) {
           return const AppErrorView(
             message: 'ليس لديك صلاحية عرض الحركات المالية.',
           );

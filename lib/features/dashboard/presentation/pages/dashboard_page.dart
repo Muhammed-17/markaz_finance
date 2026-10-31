@@ -720,12 +720,12 @@ class _MonthlyBars extends StatelessWidget {
           width: slot * 12,
           child: Stack(
             children: [
-              Positioned(
+              const Positioned(
                 left: 0,
                 right: 0,
                 top: 0,
                 height: AppDimensions.chartHeight,
-                child: const Column(
+                child: Column(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [_GridLine(), _GridLine(), _GridLine()],
                 ),
