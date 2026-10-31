@@ -11,6 +11,18 @@ abstract final class DashboardStrings {
       'لا توجد حركات شهرية مسجلة لهذه السنة بعد';
   static const String refreshTooltip = 'تحديث البيانات';
   static const String viewAllTransactions = 'عرض كل الحركات';
+  static const String pageSubtitle = 'نظرة عامة على الوضع المالي';
+  static const String openingBalanceIncluded = 'يتضمن رصيدًا افتتاحيًا بقيمة';
+  static const String envelopesTotal = 'إجمالي أرصدة الأظرف';
+  static const String activeEnvelopesCount = 'ظرف نشط';
+  static const String alertsTileTitle = 'التنبيهات';
+  static const String alertsNeedAttention = 'تحتاج انتباهك';
+  static const String shareOfTotal = 'من إجمالي الأظرف';
+  static const String yearTotalIncome = 'إيراد السنة';
+  static const String yearTotalExpense = 'مصروف السنة';
+  static const String yearNet = 'صافي السنة';
+  static const String selectedMonthNet = 'الصافي';
+  static const String monthlySubtitle = 'اضغط على شهر لعرض تفاصيله';
 
   /// نص تنبيه ظرف مؤرشف برصيد غير صفري.
   static String archivedEnvelopeAlert(String name, String amount) =>

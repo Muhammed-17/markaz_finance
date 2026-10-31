@@ -13,6 +13,7 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_dialogs.dart';
+import '../../../../core/widgets/app_page_widgets.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../cubit/settings_cubit.dart';
@@ -56,28 +57,32 @@ class _SettingsView extends StatelessWidget {
           showAppSnackBar(context, message: message, isError: isError);
         },
         builder: (context, state) {
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 720),
-              child: ListView(
-                padding: const EdgeInsets.all(AppDimensions.pagePaddingMobile),
-                children: [
-                  _ProfileSection(profile: state.profile),
-                  const SizedBox(height: AppDimensions.sectionSpacing),
-                  _ConnectivitySection(isOnline: state.isOnline),
-                  const SizedBox(height: AppDimensions.sectionSpacing),
-                  const _StorageSection(),
-                  const SizedBox(height: AppDimensions.sectionSpacing),
-                  _DisplaySection(isDarkMode: state.isDarkMode),
-                  const SizedBox(height: AppDimensions.sectionSpacing),
-                  _AppLockSection(profile: state.profile),
-                  const SizedBox(height: AppDimensions.sectionSpacing),
-                  const _SessionSection(),
-                  const SizedBox(height: AppDimensions.sectionSpacing),
-                  const _AboutSection(),
-                ],
+          return AppPageScroll(
+            maxWidth: 720,
+            children: [
+              const AppPageHeader(
+                title: AppStrings.navSettings,
+                subtitle: 'إدارة حسابك وتفضيلات التطبيق',
               ),
-            ),
+              const SizedBox(height: AppDimensions.sectionSpacing),
+              _ProfileSection(
+                profile: state.profile,
+                isOnline: state.isOnline,
+              ),
+              const SizedBox(height: AppDimensions.sectionSpacing),
+              const _GroupLabel('الأمان والعرض'),
+              _AppLockSection(profile: state.profile),
+              const SizedBox(height: AppDimensions.itemSpacing),
+              _DisplaySection(isDarkMode: state.isDarkMode),
+              const SizedBox(height: AppDimensions.sectionSpacing),
+              const _GroupLabel('البيانات والجلسة'),
+              const _StorageSection(),
+              const SizedBox(height: AppDimensions.itemSpacing),
+              const _SessionSection(),
+              const SizedBox(height: AppDimensions.sectionSpacing),
+              const _AboutSection(),
+              const SizedBox(height: AppDimensions.sectionSpacing),
+            ],
           );
         },
       ),
@@ -85,75 +90,132 @@ class _SettingsView extends StatelessWidget {
   }
 }
 
-/// قسم الملف الشخصي: الاسم/البريد/الدور + قائمة الصلاحيات المالية.
+/// قسم الملف الشخصي: بطاقة بارزة (الاسم/البريد/الدور/حالة الاتصال)
+/// + بطاقة الصلاحيات المالية.
 class _ProfileSection extends StatelessWidget {
-  const _ProfileSection({required this.profile});
+  const _ProfileSection({required this.profile, required this.isOnline});
 
   final UserProfileEntity? profile;
+  final bool isOnline;
 
   static const List<(PermissionAction, String)> _permissionLabels = [
+    (PermissionAction.view, AppStrings.permissionView),
     (PermissionAction.create, AppStrings.permissionCreate),
     (PermissionAction.update, AppStrings.permissionUpdate),
     (PermissionAction.cancel, AppStrings.permissionCancel),
     (PermissionAction.approve, AppStrings.permissionApprove),
   ];
 
+  static String _initial(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return '?';
+    return String.fromCharCode(trimmed.runes.first);
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = profile;
 
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppHeroCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.account_circle_rounded,
-                  color: AppColors.primary, size: AppDimensions.iconLarge),
-              SizedBox(width: AppDimensions.spacing8),
-              Expanded(
-                child: Text(
-                  'الملف الشخصي',
-                  style: AppTypography.headlineSmall,
-                ),
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: AppDimensions.avatarRadiusLarge,
+                    backgroundColor: AppColors.onHeroSurface,
+                    child: Text(
+                      user == null ? '…' : _initial(user.name),
+                      style: AppTypography.headlineLarge.copyWith(
+                        color: AppColors.textOnPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppDimensions.spacing16),
+                  Expanded(
+                    child: user == null
+                        ? Text(
+                            AppStrings.loading,
+                            style: AppTypography.titleLarge.copyWith(
+                              color: AppColors.onHeroMuted,
+                            ),
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                user.name,
+                                style: AppTypography.headlineSmall.copyWith(
+                                  color: AppColors.textOnPrimary,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: AppDimensions.spacing2),
+                              Text(
+                                user.email,
+                                style: AppTypography.bodySmall.copyWith(
+                                  color: AppColors.onHeroMuted,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppDimensions.spacing16),
+              Wrap(
+                spacing: AppDimensions.spacing8,
+                runSpacing: AppDimensions.spacing8,
+                children: [
+                  if (user != null)
+                    AppHeroPill(
+                      label: user.isAdmin
+                          ? AppStrings.roleAdmin
+                          : AppStrings.roleUser,
+                    ),
+                  _ConnectivityPill(isOnline: isOnline),
+                ],
               ),
             ],
           ),
-          const SizedBox(height: AppDimensions.spacing12),
-          if (user == null) ...[
-            const Text(
-              AppStrings.loading,
-              style: AppTypography.bodyMedium,
+        ),
+        if (user != null) ...[
+          const SizedBox(height: AppDimensions.itemSpacing),
+          AppCard(
+            elevated: true,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _SectionHeader(
+                  icon: Icons.verified_user_rounded,
+                  title: 'الصلاحيات المالية',
+                ),
+                if (user.isAdmin) ...[
+                  const SizedBox(height: AppDimensions.spacing8),
+                  const Text(
+                    'المدير يمتلك كل الصلاحيات ضمنيًا',
+                    style: AppTypography.bodySmall,
+                  ),
+                ],
+                const SizedBox(height: AppDimensions.spacing12),
+                ..._permissionLabels.map(
+                  (entry) => _PermissionRow(
+                    label: entry.$2,
+                    granted: PermissionService.can(user, entry.$1),
+                  ),
+                ),
+              ],
             ),
-          ] else ...[
-            AppInfoRow(label: AppStrings.name, value: user.name),
-            AppInfoRow(label: AppStrings.email, value: user.email),
-            AppInfoRow(
-              label: 'الدور',
-              value: user.isAdmin ? AppStrings.roleAdmin : AppStrings.roleUser,
-            ),
-            const SizedBox(height: AppDimensions.spacing12),
-            const Text(
-              'الصلاحيات المالية',
-              style: AppTypography.titleMedium,
-            ),
-            if (user.isAdmin) ...[
-              const SizedBox(height: AppDimensions.spacing4),
-              const Text(
-                'المدير يمتلك كل الصلاحيات ضمنيًا',
-                style: AppTypography.bodySmall,
-              ),
-            ],
-            const SizedBox(height: AppDimensions.spacing4),
-            ..._permissionLabels.map(
-              (entry) => _PermissionRow(
-                label: entry.$2,
-                granted: PermissionService.can(user, entry.$1),
-              ),
-            ),
-          ],
+          ),
         ],
-      ),
+      ],
     );
   }
 }
@@ -194,41 +256,101 @@ class _PermissionRow extends StatelessWidget {
   }
 }
 
-/// قسم الاتصال: مؤشر حي (أخضر متصل / أحمر منقطع).
-class _ConnectivitySection extends StatelessWidget {
-  const _ConnectivitySection({required this.isOnline});
+/// شريحة حالة الاتصال داخل البطاقة البارزة (نقطة + نص).
+class _ConnectivityPill extends StatelessWidget {
+  const _ConnectivityPill({required this.isOnline});
 
   final bool isOnline;
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppDimensions.spacing12,
+        vertical: AppDimensions.spacing4,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.onHeroSurface,
+        borderRadius: BorderRadius.circular(AppDimensions.radiusExtraLarge),
+      ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: AppDimensions.spacing12,
-            height: AppDimensions.spacing12,
+            width: AppDimensions.spacing8,
+            height: AppDimensions.spacing8,
             decoration: BoxDecoration(
-              color: isOnline ? AppColors.success : AppColors.error,
+              color: isOnline ? AppColors.successLight : AppColors.warningLight,
               shape: BoxShape.circle,
             ),
           ),
-          const SizedBox(width: AppDimensions.spacing12),
-          Expanded(
-            child: Text(
-              isOnline ? 'متصل بالإنترنت' : 'غير متصل — العمل في وضع محدود',
-              style: AppTypography.bodyMedium.copyWith(
-                color: isOnline ? AppColors.success : AppColors.error,
-                fontWeight: FontWeight.w600,
-              ),
+          const SizedBox(width: AppDimensions.spacing8),
+          Text(
+            isOnline ? 'متصل بالإنترنت' : 'غير متصل — وضع محدود',
+            style: AppTypography.labelSmall.copyWith(
+              color: AppColors.textOnPrimary,
             ),
-          ),
-          const Text(
-            'حالة الاتصال',
-            style: AppTypography.labelMedium,
           ),
         ],
       ),
+    );
+  }
+}
+
+/// عنوان مجموعة إعدادات (نص صغير فوق البطاقات).
+class _GroupLabel extends StatelessWidget {
+  const _GroupLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppDimensions.spacing8),
+      child: Text(
+        text,
+        style: AppTypography.titleSmall.copyWith(
+          color: AppColors.textSecondary,
+        ),
+      ),
+    );
+  }
+}
+
+/// ترويسة قسم داخل بطاقة: شارة أيقونة + عنوان + سطر فرعي اختياري.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.color = AppColors.primary,
+    this.background = AppColors.primaryLight,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Color color;
+  final Color background;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        AppIconBadge(icon: icon, color: color, background: background),
+        const SizedBox(width: AppDimensions.spacing12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: AppTypography.headlineSmall),
+              if (subtitle != null)
+                Text(subtitle!, style: AppTypography.bodySmall),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -306,17 +428,17 @@ class _StorageSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppCard(
+      elevated: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('التخزين المحلي', style: AppTypography.headlineSmall),
-          const SizedBox(height: AppDimensions.spacing8),
-          const Text(
-            'Hive للتخزين المؤقت فقط وليس مصدرًا للأرصدة أو الصلاحيات. '
-            'كل البيانات الموثوقة تُقرأ من الخادم.',
-            style: AppTypography.bodySmall,
+          const _SectionHeader(
+            icon: Icons.storage_rounded,
+            title: 'التخزين المحلي',
+            subtitle: 'Hive للتخزين المؤقت فقط وليس مصدرًا للأرصدة '
+                'أو الصلاحيات. كل البيانات الموثوقة تُقرأ من الخادم.',
           ),
-          const SizedBox(height: AppDimensions.spacing12),
+          const SizedBox(height: AppDimensions.spacing16),
           BlocBuilder<SettingsCubit, SettingsState>(
             builder: (context, state) {
               return AppButton(
@@ -343,10 +465,16 @@ class _DisplaySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppCard(
+      elevated: true,
       child: SwitchListTile(
         value: isDarkMode,
         onChanged: (value) =>
             context.read<SettingsCubit>().toggleDarkMode(value),
+        secondary: const AppIconBadge(
+          icon: Icons.dark_mode_rounded,
+          color: AppColors.info,
+          background: AppColors.infoLight,
+        ),
         title: const Text('الوضع الداكن'),
         subtitle: const Text(
           'يُحفظ تفضيلك الآن — سيتم تطبيق الثيم الداكن في إصدار قادم',
@@ -452,12 +580,16 @@ class _AppLockSectionState extends State<_AppLockSection> {
   Widget build(BuildContext context) {
     final canConfigure = widget.profile != null && !_loading;
     return AppCard(
+      elevated: true,
       child: SwitchListTile(
         contentPadding: EdgeInsets.zero,
         value: _enabled,
         onChanged: canConfigure ? _setEnabled : null,
-        secondary: const Icon(Icons.fingerprint_rounded,
-            color: AppColors.primary, size: AppDimensions.iconLarge),
+        secondary: const AppIconBadge(
+          icon: Icons.fingerprint_rounded,
+          color: AppColors.primary,
+          background: AppColors.primaryLight,
+        ),
         title: const Text('قفل التطبيق بالبصمة'),
         subtitle: const Text(
           'عند الفتح أو العودة من الخلفية ستُطلب البصمة. أنشئ كلمة مرور '
@@ -563,16 +695,18 @@ class _SessionSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppCard(
+      elevated: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('الجلسة', style: AppTypography.headlineSmall),
-          const SizedBox(height: AppDimensions.spacing8),
-          const Text(
-            'سيتم مسح البيانات المؤقتة المحلية عند تسجيل الخروج',
-            style: AppTypography.bodySmall,
+          const _SectionHeader(
+            icon: Icons.manage_accounts_rounded,
+            title: 'الجلسة',
+            subtitle: 'سيتم مسح البيانات المؤقتة المحلية عند تسجيل الخروج',
+            color: AppColors.error,
+            background: AppColors.errorLight,
           ),
-          const SizedBox(height: AppDimensions.spacing12),
+          const SizedBox(height: AppDimensions.spacing16),
           AppButton(
             label: AppStrings.signOut,
             icon: Icons.logout_rounded,
@@ -592,11 +726,17 @@ class _AboutSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const AppCard(
+      elevated: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('حول التطبيق', style: AppTypography.headlineSmall),
-          SizedBox(height: AppDimensions.spacing8),
+          _SectionHeader(
+            icon: Icons.info_rounded,
+            title: 'حول التطبيق',
+            color: AppColors.secondary,
+            background: AppColors.secondaryLight,
+          ),
+          SizedBox(height: AppDimensions.spacing12),
           AppInfoRow(label: 'اسم التطبيق', value: AppStrings.appName),
           AppInfoRow(label: 'الإصدار', value: '1.0.0'),
           SizedBox(height: AppDimensions.spacing8),

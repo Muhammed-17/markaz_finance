@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/constants/app_durations.dart';
 import '../../../../core/domain/entities/center_ref.dart';
 import '../../../../core/domain/entities/envelope_entity.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -10,6 +11,7 @@ import '../../../../core/utils/date_time_utils.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../../core/widgets/app_card.dart';
+import '../../../../core/widgets/app_page_widgets.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../../transactions/presentation/widgets/month_field.dart'
@@ -48,8 +50,9 @@ abstract final class ReportPeriodBounds {
   }
 }
 
-/// شريط فلاتر التقرير: الفترة، المركز، النوع، التصنيف، الظرف + زر التوليد.
-class ReportFiltersBar extends StatelessWidget {
+/// شريط فلاتر التقرير: الفترة (شرائح سريعة) + فلاتر متقدمة قابلة للطي
+/// (المركز، النوع، التصنيف، الظرف) + إعادة ضبط + زر التوليد.
+class ReportFiltersBar extends StatefulWidget {
   const ReportFiltersBar({
     required this.filter,
     required this.centers,
@@ -74,49 +77,88 @@ class ReportFiltersBar extends StatelessWidget {
   final VoidCallback onGenerate;
 
   @override
+  State<ReportFiltersBar> createState() => _ReportFiltersBarState();
+}
+
+class _ReportFiltersBarState extends State<ReportFiltersBar> {
+  late bool _advancedExpanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _advancedExpanded = _advancedCount > 0;
+  }
+
+  int get _advancedCount {
+    final f = widget.filter;
+    return [f.centerId, f.type, f.category, f.envelopeId]
+        .where((value) => value != null)
+        .length;
+  }
+
+  void _reset() {
+    final f = widget.filter;
+    widget.onFilterChanged(
+      ReportFilter(from: f.from, to: f.to, loanStatus: f.loanStatus),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final filter = widget.filter;
+    final selectedPeriod = widget.selectedPeriod;
     final categories = filter.type == null
         ? const <String>[]
         : filter.type == AppTransactionTypes.income
             ? AppIncomeCategories.all
             : AppExpenseCategories.all;
+    final count = _advancedCount;
+    final expanded = _advancedExpanded;
 
     return AppCard(
+      elevated: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // الفترة: أزرار سريعة
-          const Text(ReportsStrings.periodLabel,
-              style: AppTypography.titleMedium),
-          const SizedBox(height: AppDimensions.spacing8),
+          const Row(
+            children: [
+              Icon(Icons.date_range_rounded,
+                  color: AppColors.primary, size: AppDimensions.iconMedium),
+              SizedBox(width: AppDimensions.spacing8),
+              Text(ReportsStrings.periodLabel,
+                  style: AppTypography.titleLarge),
+            ],
+          ),
+          const SizedBox(height: AppDimensions.spacing12),
           Wrap(
             spacing: AppDimensions.spacing8,
             runSpacing: AppDimensions.spacing8,
             children: [
-              _PeriodChip(
+              AppChoiceChip(
                 label: ReportsStrings.periodThisMonth,
                 selected: selectedPeriod == ReportPeriod.thisMonth,
-                onTap: () => onPeriodSelected(ReportPeriod.thisMonth),
+                onTap: () => widget.onPeriodSelected(ReportPeriod.thisMonth),
               ),
-              _PeriodChip(
+              AppChoiceChip(
                 label: ReportsStrings.periodLastMonth,
                 selected: selectedPeriod == ReportPeriod.lastMonth,
-                onTap: () => onPeriodSelected(ReportPeriod.lastMonth),
+                onTap: () => widget.onPeriodSelected(ReportPeriod.lastMonth),
               ),
-              _PeriodChip(
+              AppChoiceChip(
                 label: ReportsStrings.periodThisYear,
                 selected: selectedPeriod == ReportPeriod.thisYear,
-                onTap: () => onPeriodSelected(ReportPeriod.thisYear),
+                onTap: () => widget.onPeriodSelected(ReportPeriod.thisYear),
               ),
-              _PeriodChip(
+              AppChoiceChip(
                 label: ReportsStrings.periodAll,
                 selected: selectedPeriod == ReportPeriod.all,
-                onTap: () => onPeriodSelected(ReportPeriod.all),
+                onTap: () => widget.onPeriodSelected(ReportPeriod.all),
               ),
-              _PeriodChip(
+              AppChoiceChip(
                 label: ReportsStrings.periodCustom,
+                icon: Icons.edit_calendar_rounded,
                 selected: selectedPeriod == ReportPeriod.custom,
-                onTap: () => onPeriodSelected(ReportPeriod.custom),
+                onTap: () => widget.onPeriodSelected(ReportPeriod.custom),
               ),
             ],
           ),
@@ -130,7 +172,7 @@ class ReportFiltersBar extends StatelessWidget {
                   child: _CustomDateField(
                     label: ReportsStrings.customFromDate,
                     value: filter.from,
-                    onPicked: (d) => onCustomDatesPicked(d, filter.to),
+                    onPicked: (d) => widget.onCustomDatesPicked(d, filter.to),
                   ),
                 ),
                 const SizedBox(width: AppDimensions.spacing12),
@@ -139,7 +181,8 @@ class ReportFiltersBar extends StatelessWidget {
                     label: ReportsStrings.customToDate,
                     value: filter.to,
                     firstDate: filter.from,
-                    onPicked: (d) => onCustomDatesPicked(filter.from, d),
+                    onPicked: (d) =>
+                        widget.onCustomDatesPicked(filter.from, d),
                   ),
                 ),
               ],
@@ -147,164 +190,191 @@ class ReportFiltersBar extends StatelessWidget {
           ],
 
           const SizedBox(height: AppDimensions.spacing16),
-          Wrap(
-            spacing: AppDimensions.spacing12,
-            runSpacing: AppDimensions.spacing12,
-            children: [
-              // المركز
-              SizedBox(
-                width: 200,
-                child: AppDropdownField<String>(
-                  label: AppStrings.center,
-                  items: centers
-                      .map((c) => DropdownMenuItem<String>(
-                            value: c.id,
-                            child: Text(c.name),
-                          ))
-                      .toList(),
-                  value: filter.centerId,
-                  hint: AppStrings.all,
-                  onChanged: (v) => onFilterChanged(
-                    ReportFilter(
-                      from: filter.from,
-                      to: filter.to,
-                      centerId: v,
-                      type: filter.type,
-                      category: filter.category,
-                      envelopeId: filter.envelopeId,
-                      loanStatus: filter.loanStatus,
-                    ),
-                  ),
-                ),
+          const Divider(),
+
+          // رأس الفلاتر المتقدمة
+          InkWell(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+            onTap: () => setState(() => _advancedExpanded = !expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                vertical: AppDimensions.spacing12,
               ),
-              // النوع
-              SizedBox(
-                width: 170,
-                child: AppDropdownField<String>(
-                  label: AppStrings.type,
-                  items: const [
-                    DropdownMenuItem(
-                        value: AppTransactionTypes.income,
-                        child: Text(AppStrings.incomeShort)),
-                    DropdownMenuItem(
-                        value: AppTransactionTypes.expense,
-                        child: Text(AppStrings.expenseShort)),
+              child: Row(
+                children: [
+                  const Icon(Icons.tune_rounded,
+                      color: AppColors.primary,
+                      size: AppDimensions.iconMedium),
+                  const SizedBox(width: AppDimensions.spacing8),
+                  const Text('فلاتر متقدمة', style: AppTypography.titleLarge),
+                  if (count > 0) ...[
+                    const SizedBox(width: AppDimensions.spacing8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppDimensions.spacing8,
+                        vertical: AppDimensions.spacing2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(
+                            AppDimensions.radiusExtraLarge),
+                      ),
+                      child: Text(
+                        AppFormatters.integer(count),
+                        style: AppTypography.labelSmall.copyWith(
+                          color: AppColors.textOnPrimary,
+                        ),
+                      ),
+                    ),
                   ],
-                  value: filter.type,
-                  hint: AppStrings.all,
-                  onChanged: (v) => onFilterChanged(
-                    // تغيير النوع يصفّر التصنيف لأن قائمته تختلف.
-                    ReportFilter(
-                      from: filter.from,
-                      to: filter.to,
-                      centerId: filter.centerId,
-                      type: v,
-                      category: null,
-                      envelopeId: filter.envelopeId,
-                      loanStatus: filter.loanStatus,
-                    ),
+                  const Spacer(),
+                  AnimatedRotation(
+                    turns: expanded ? 0.5 : 0,
+                    duration: AppDurations.fast,
+                    child: const Icon(Icons.expand_more_rounded,
+                        color: AppColors.textSecondary),
                   ),
-                ),
+                ],
               ),
-              // التصنيف (يُحدَّث حسب النوع)
-              SizedBox(
-                width: 220,
-                child: CategoryField(
-                  label: AppStrings.category,
-                  categories: categories,
-                  value: (filter.category != null &&
-                          categories.contains(filter.category))
-                      ? filter.category
-                      : null,
-                  isRequired: false,
-                  onChanged: (v) => onFilterChanged(
-                    ReportFilter(
-                      from: filter.from,
-                      to: filter.to,
-                      centerId: filter.centerId,
-                      type: filter.type,
-                      category: v,
-                      envelopeId: filter.envelopeId,
-                      loanStatus: filter.loanStatus,
-                    ),
-                  ),
-                ),
-              ),
-              // الظرف
-              SizedBox(
-                width: 220,
-                child: AppDropdownField<String>(
-                  label: AppStrings.relatedEnvelope,
-                  items: envelopes
-                      .map((e) => DropdownMenuItem<String>(
-                            value: e.id,
-                            child: Text(e.name),
-                          ))
-                      .toList(),
-                  value: filter.envelopeId,
-                  hint: AppStrings.all,
-                  onChanged: (v) => onFilterChanged(
-                    ReportFilter(
-                      from: filter.from,
-                      to: filter.to,
-                      centerId: filter.centerId,
-                      type: filter.type,
-                      category: filter.category,
-                      envelopeId: v,
-                      loanStatus: filter.loanStatus,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppDimensions.spacing16),
-          Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: AppButton(
-              label: ReportsStrings.generateReport,
-              icon: Icons.assessment_outlined,
-              isFullWidth: false,
-              isLoading: isGenerating,
-              onPressed: isGenerating ? null : onGenerate,
             ),
           ),
+
+          AnimatedSize(
+            duration: AppDurations.fast,
+            alignment: Alignment.topCenter,
+            child: !expanded
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+                    padding:
+                        const EdgeInsets.only(top: AppDimensions.spacing4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        AppResponsiveGrid(
+                          minItemWidth: 220,
+                          children: [
+                            // المركز
+                            AppDropdownField<String>(
+                              key: ValueKey('center-${filter.centerId}'),
+                              label: AppStrings.center,
+                              items: widget.centers
+                                  .map((c) => DropdownMenuItem<String>(
+                                        value: c.id,
+                                        child: Text(c.name),
+                                      ))
+                                  .toList(),
+                              value: filter.centerId,
+                              hint: AppStrings.all,
+                              onChanged: (v) => widget.onFilterChanged(
+                                ReportFilter(
+                                  from: filter.from,
+                                  to: filter.to,
+                                  centerId: v,
+                                  type: filter.type,
+                                  category: filter.category,
+                                  envelopeId: filter.envelopeId,
+                                  loanStatus: filter.loanStatus,
+                                ),
+                              ),
+                            ),
+                            // النوع
+                            AppDropdownField<String>(
+                              key: ValueKey('type-${filter.type}'),
+                              label: AppStrings.type,
+                              items: const [
+                                DropdownMenuItem(
+                                    value: AppTransactionTypes.income,
+                                    child: Text(AppStrings.incomeShort)),
+                                DropdownMenuItem(
+                                    value: AppTransactionTypes.expense,
+                                    child: Text(AppStrings.expenseShort)),
+                              ],
+                              value: filter.type,
+                              hint: AppStrings.all,
+                              onChanged: (v) => widget.onFilterChanged(
+                                // تغيير النوع يصفّر التصنيف لأن قائمته تختلف.
+                                ReportFilter(
+                                  from: filter.from,
+                                  to: filter.to,
+                                  centerId: filter.centerId,
+                                  type: v,
+                                  category: null,
+                                  envelopeId: filter.envelopeId,
+                                  loanStatus: filter.loanStatus,
+                                ),
+                              ),
+                            ),
+                            // التصنيف (يُحدَّث حسب النوع)
+                            CategoryField(
+                              key: ValueKey(
+                                  'category-${filter.type}-${filter.category}'),
+                              label: AppStrings.category,
+                              categories: categories,
+                              value: (filter.category != null &&
+                                      categories.contains(filter.category))
+                                  ? filter.category
+                                  : null,
+                              isRequired: false,
+                              onChanged: (v) => widget.onFilterChanged(
+                                ReportFilter(
+                                  from: filter.from,
+                                  to: filter.to,
+                                  centerId: filter.centerId,
+                                  type: filter.type,
+                                  category: v,
+                                  envelopeId: filter.envelopeId,
+                                  loanStatus: filter.loanStatus,
+                                ),
+                              ),
+                            ),
+                            // الظرف
+                            AppDropdownField<String>(
+                              key: ValueKey('envelope-${filter.envelopeId}'),
+                              label: AppStrings.relatedEnvelope,
+                              items: widget.envelopes
+                                  .map((e) => DropdownMenuItem<String>(
+                                        value: e.id,
+                                        child: Text(e.name),
+                                      ))
+                                  .toList(),
+                              value: filter.envelopeId,
+                              hint: AppStrings.all,
+                              onChanged: (v) => widget.onFilterChanged(
+                                ReportFilter(
+                                  from: filter.from,
+                                  to: filter.to,
+                                  centerId: filter.centerId,
+                                  type: filter.type,
+                                  category: filter.category,
+                                  envelopeId: v,
+                                  loanStatus: filter.loanStatus,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (count > 0)
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: TextButton.icon(
+                              onPressed: _reset,
+                              icon: const Icon(Icons.restart_alt_rounded),
+                              label: const Text('إعادة ضبط الفلاتر'),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+          ),
+
+          const SizedBox(height: AppDimensions.spacing16),
+          AppButton(
+            label: ReportsStrings.generateReport,
+            icon: Icons.assessment_outlined,
+            isLoading: widget.isGenerating,
+            onPressed: widget.isGenerating ? null : widget.onGenerate,
+          ),
         ],
-      ),
-    );
-  }
-}
-
-class _PeriodChip extends StatelessWidget {
-  const _PeriodChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      onSelected: (_) => onTap(),
-      selectedColor: AppColors.primaryLight,
-      labelStyle: AppTypography.labelMedium.copyWith(
-        color: selected ? AppColors.primary : AppColors.textSecondary,
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppDimensions.radiusExtraLarge),
-        side:
-            BorderSide(color: selected ? AppColors.primary : AppColors.border),
-      ),
-      showCheckmark: false,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppDimensions.spacing12,
-        vertical: AppDimensions.spacing4,
       ),
     );
   }

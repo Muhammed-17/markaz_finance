@@ -39,6 +39,13 @@ abstract final class AppColors {
   static const Color expense = Color(0xFFB83A3A);
   static const Color expenseLight = Color(0xFFFBEAEA);
 
+  // Hero / elevation (إعادة تصميم الصفحات الرئيسية)
+  static const Color heroGradientStart = Color(0xFF1B7C69);
+  static const Color heroGradientEnd = Color(0xFF0E4238);
+  static const Color onHeroMuted = Color(0xBFFFFFFF);
+  static const Color onHeroSurface = Color(0x24FFFFFF);
+  static const Color shadow = Color(0x12104C41);
+
   // States
   static const Color disabled = Color(0xFFB7C0C5);
   static const Color shimmer = Color(0xFFE8EEEC);

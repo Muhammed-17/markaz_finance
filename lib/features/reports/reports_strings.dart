@@ -29,4 +29,20 @@ abstract final class ReportsStrings {
   static const String netLabel = 'الصافي';
   static const String incomeColumn = 'إيراد';
   static const String expenseColumn = 'مصروف';
+
+  static const String pageSubtitle =
+      'حلّل الإيرادات والمصروفات حسب الفترة والتصنيف';
+  static const String netOperating = 'صافي التشغيل';
+  static const String copySummary = 'نسخ الملخص';
+  static const String summaryCopied = 'تم نسخ ملخص التقرير';
+  static const String incomeTab = 'الإيرادات';
+  static const String expenseTab = 'المصروفات';
+  static const String totalLabel = 'الإجمالي';
+  static const String noCategoryData = 'لا توجد بيانات لهذا النوع';
+  static const String internalTransfers = 'تحويلات الأظرف الداخلية';
+  static const String loanDisbursementsShort = 'صرف السلف';
+  static const String loanRepaymentsShort = 'سداد السلف';
+  static const String includedInExpenses = 'مضمّن في المصروفات';
+  static const String includedInIncome = 'مضمّن في الإيرادات';
+  static const String transactionsUnit = 'حركة';
 }

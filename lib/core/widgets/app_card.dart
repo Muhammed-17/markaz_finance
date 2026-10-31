@@ -13,6 +13,7 @@ class AppCard extends StatelessWidget {
     this.margin = EdgeInsets.zero,
     this.borderColor,
     this.backgroundColor,
+    this.elevated = false,
     super.key,
   });
 
@@ -23,6 +24,9 @@ class AppCard extends StatelessWidget {
   final Color? borderColor;
   final Color? backgroundColor;
 
+  /// ظل ناعم خفيف (التصميم الحديث للصفحات الرئيسية).
+  final bool elevated;
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -31,6 +35,15 @@ class AppCard extends StatelessWidget {
         color: backgroundColor ?? AppColors.surface,
         borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
         border: Border.all(color: borderColor ?? AppColors.border),
+        boxShadow: elevated
+            ? const [
+                BoxShadow(
+                  color: AppColors.shadow,
+                  blurRadius: 16,
+                  offset: Offset(0, 6),
+                ),
+              ]
+            : null,
       ),
       child: Material(
         color: Colors.transparent,

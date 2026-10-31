@@ -172,6 +172,7 @@ abstract final class AppLogActions {
 abstract final class AppFunctions {
   static const String region = 'europe-west1';
   static const String createTransaction = 'createTransaction';
+  static const String updateTransaction = 'updateTransaction';
   static const String cancelTransaction = 'cancelTransaction';
   static const String transferBetweenEnvelopes = 'transferBetweenEnvelopes';
   static const String createEnvelope = 'createEnvelope';

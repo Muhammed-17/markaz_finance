@@ -110,4 +110,5 @@ abstract final class AppStrings {
   static const String permissionUpdate = 'تعديل البيانات';
   static const String permissionCancel = 'إلغاء الحركات';
   static const String permissionApprove = 'اعتماد العمليات';
+
 }

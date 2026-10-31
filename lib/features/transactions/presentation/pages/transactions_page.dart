@@ -6,9 +6,9 @@ import '../../../../app/di/injection.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
+import '../../../../core/constants/app_durations.dart';
 import '../../../../core/data/models/envelope_model.dart';
 import '../../../../core/data/models/transaction_model.dart';
-import '../../../../core/services/categories_service.dart';
 import '../../../../core/services/financial_operations_service.dart';
 import '../../../../core/services/permission_service.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -16,10 +16,11 @@ import '../../../../core/utils/formatters.dart';
 import '../../../../core/widgets/app_amount_text.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_error_view.dart';
+import '../../../../core/widgets/app_page_widgets.dart';
 import '../../../auth/presentation/bloc/auth_bloc.dart';
-import '../widgets/month_field.dart' show categoryLabel;
 
 /// سجل الحركات النقدية الفعلي؛ البحث والتصفية محليان لتجنب فهارس مركبة جديدة.
+/// التصميم: ملخص سريع، فلاتر بشرائح، وقائمة مجمعة حسب اليوم مع تفاصيل قابلة للتوسيع.
 class TransactionsPage extends StatefulWidget {
   const TransactionsPage({super.key});
 
@@ -31,12 +32,29 @@ class _TransactionsPageState extends State<TransactionsPage> {
   final _searchController = TextEditingController();
   String _type = _Filter.all;
   String _status = _Filter.all;
+  String _category = _Filter.all;
+  bool _newestFirst = true;
   bool _cancelling = false;
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  bool get _hasActiveFilters =>
+      _type != _Filter.all ||
+      _status != _Filter.all ||
+      _category != _Filter.all ||
+      _searchController.text.trim().isNotEmpty;
+
+  void _clearFilters() {
+    _searchController.clear();
+    setState(() {
+      _type = _Filter.all;
+      _status = _Filter.all;
+      _category = _Filter.all;
+    });
   }
 
   List<TransactionModel> _filtered(List<TransactionModel> source) {
@@ -47,9 +65,14 @@ class _TransactionsPageState extends State<TransactionsPage> {
           .toLowerCase();
       return (_type == _Filter.all || item.type == _type) &&
           (_status == _Filter.all || item.status == _status) &&
+          (_category == _Filter.all || item.category == _category) &&
           (search.isEmpty || haystack.contains(search));
     }).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      ..sort(
+        (a, b) => _newestFirst
+            ? b.createdAt.compareTo(a.createdAt)
+            : a.createdAt.compareTo(b.createdAt),
+      );
     return items;
   }
 
@@ -111,6 +134,11 @@ class _TransactionsPageState extends State<TransactionsPage> {
       builder: (context, authState) {
         final profile =
             authState is AuthAuthenticated ? authState.profile : null;
+        if (!PermissionService.can(profile, PermissionAction.view)) {
+          return const AppErrorView(
+            message: 'ليس لديك صلاحية عرض الحركات المالية.',
+          );
+        }
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection(AppCollections.transactions)
@@ -132,6 +160,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
               searchController: _searchController,
               type: _type,
               status: _status,
+              category: _category,
+              newestFirst: _newestFirst,
+              hasActiveFilters: _hasActiveFilters,
               cancelling: _cancelling,
               canCreate:
                   PermissionService.can(profile, PermissionAction.create),
@@ -140,6 +171,10 @@ class _TransactionsPageState extends State<TransactionsPage> {
               onSearchChanged: () => setState(() {}),
               onTypeChanged: (value) => setState(() => _type = value),
               onStatusChanged: (value) => setState(() => _status = value),
+              onCategoryChanged: (value) => setState(() => _category = value),
+              onToggleSort: () =>
+                  setState(() => _newestFirst = !_newestFirst),
+              onClearFilters: _clearFilters,
               onCreate: _showCreateTransaction,
               onCancel: _cancel,
             );
@@ -157,12 +192,18 @@ class _TransactionsView extends StatelessWidget {
     required this.searchController,
     required this.type,
     required this.status,
+    required this.category,
+    required this.newestFirst,
+    required this.hasActiveFilters,
     required this.cancelling,
     required this.canCreate,
     required this.canCancel,
     required this.onSearchChanged,
     required this.onTypeChanged,
     required this.onStatusChanged,
+    required this.onCategoryChanged,
+    required this.onToggleSort,
+    required this.onClearFilters,
     required this.onCreate,
     required this.onCancel,
   });
@@ -172,76 +213,625 @@ class _TransactionsView extends StatelessWidget {
   final TextEditingController searchController;
   final String type;
   final String status;
+  final String category;
+  final bool newestFirst;
+  final bool hasActiveFilters;
   final bool cancelling;
   final bool canCreate;
   final bool canCancel;
   final VoidCallback onSearchChanged;
   final ValueChanged<String> onTypeChanged;
   final ValueChanged<String> onStatusChanged;
+  final ValueChanged<String> onCategoryChanged;
+  final VoidCallback onToggleSort;
+  final VoidCallback onClearFilters;
   final VoidCallback onCreate;
+  final ValueChanged<TransactionModel> onCancel;
+
+  num _sum(Iterable<TransactionModel> items, String type) => items
+      .where((item) =>
+          item.status == AppStatuses.active && item.type == type)
+      .fold<num>(0, (value, item) => value + item.amount);
+
+  @override
+  Widget build(BuildContext context) {
+    final income = _sum(all, AppTransactionTypes.income);
+    final expense = _sum(all, AppTransactionTypes.expense);
+    final visibleIncome = _sum(visible, AppTransactionTypes.income);
+    final visibleExpense = _sum(visible, AppTransactionTypes.expense);
+
+    final categories = all
+        .map((item) => item.category)
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => _categoryLabel(a).compareTo(_categoryLabel(b)));
+
+    final groups = _groupByDay(visible);
+
+    return AppPageScroll(
+      children: [
+        AppPageHeader(
+          title: 'الحركات المالية',
+          subtitle: 'سجل الإيرادات والمصروفات المسجلة في النظام.',
+          actions: [
+            if (canCreate)
+              FilledButton.icon(
+                onPressed: onCreate,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('إضافة حركة'),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppDimensions.sectionSpacing),
+        _SummaryTiles(income: income, expense: expense, count: all.length),
+        const SizedBox(height: AppDimensions.sectionSpacing),
+        _FiltersCard(
+          searchController: searchController,
+          type: type,
+          status: status,
+          category: category,
+          categories: categories,
+          hasActiveFilters: hasActiveFilters,
+          onSearchChanged: onSearchChanged,
+          onTypeChanged: onTypeChanged,
+          onStatusChanged: onStatusChanged,
+          onCategoryChanged: onCategoryChanged,
+          onClearFilters: onClearFilters,
+        ),
+        const SizedBox(height: AppDimensions.sectionSpacing),
+        AppSectionTitle(
+          title: 'الحركات (${visible.length})',
+          trailing: TextButton.icon(
+            onPressed: onToggleSort,
+            icon: const Icon(Icons.swap_vert_rounded),
+            label: Text(newestFirst ? 'الأحدث أولًا' : 'الأقدم أولًا'),
+          ),
+        ),
+        if (hasActiveFilters && visible.isNotEmpty) ...[
+          const SizedBox(height: AppDimensions.spacing8),
+          Wrap(
+            spacing: AppDimensions.spacing8,
+            runSpacing: AppDimensions.spacing8,
+            children: [
+              _InlinePill(
+                label: 'إيراد المعروض',
+                value: AppFormatters.amountCompact(visibleIncome),
+                color: AppColors.income,
+                background: AppColors.incomeLight,
+              ),
+              _InlinePill(
+                label: 'مصروف المعروض',
+                value: AppFormatters.amountCompact(visibleExpense),
+                color: AppColors.expense,
+                background: AppColors.expenseLight,
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: AppDimensions.spacing12),
+        if (visible.isEmpty)
+          _EmptyTransactions(
+            hasActiveFilters: hasActiveFilters,
+            onClearFilters: onClearFilters,
+          )
+        else
+          for (final group in groups)
+            _DaySection(
+              group: group,
+              canCancel: canCancel,
+              cancelling: cancelling,
+              onCancel: onCancel,
+            ),
+        const SizedBox(height: AppDimensions.sectionSpacing),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// الملخص
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SummaryTiles extends StatelessWidget {
+  const _SummaryTiles({
+    required this.income,
+    required this.expense,
+    required this.count,
+  });
+
+  final num income;
+  final num expense;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final net = income - expense;
+    return AppResponsiveGrid(
+      minItemWidth: 240,
+      children: [
+        AppMetricTile(
+          label: 'إجمالي الإيرادات',
+          value: AppFormatters.amount(income),
+          icon: Icons.south_west_rounded,
+          color: AppColors.income,
+          background: AppColors.incomeLight,
+          valueColor: AppColors.income,
+        ),
+        AppMetricTile(
+          label: 'إجمالي المصروفات',
+          value: AppFormatters.amount(expense),
+          icon: Icons.north_east_rounded,
+          color: AppColors.expense,
+          background: AppColors.expenseLight,
+          valueColor: AppColors.expense,
+        ),
+        AppMetricTile(
+          label: 'الرصيد الصافي',
+          value: AppFormatters.amountSigned(net),
+          icon: Icons.account_balance_wallet_rounded,
+          color: AppColors.primary,
+          background: AppColors.primaryLight,
+          valueColor: net < 0 ? AppColors.expense : AppColors.primaryDark,
+        ),
+        AppMetricTile(
+          label: 'عدد الحركات',
+          value: AppFormatters.integer(count),
+          icon: Icons.receipt_long_rounded,
+          color: AppColors.info,
+          background: AppColors.infoLight,
+        ),
+      ],
+    );
+  }
+}
+
+class _InlinePill extends StatelessWidget {
+  const _InlinePill({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.background,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+  final Color background;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppDimensions.spacing12,
+        vertical: AppDimensions.spacing4,
+      ),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(AppDimensions.radiusExtraLarge),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: AppTypography.labelMedium),
+          const SizedBox(width: AppDimensions.spacing8),
+          Text(value, style: AppTypography.titleMedium.copyWith(color: color)),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// الفلاتر
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FiltersCard extends StatelessWidget {
+  const _FiltersCard({
+    required this.searchController,
+    required this.type,
+    required this.status,
+    required this.category,
+    required this.categories,
+    required this.hasActiveFilters,
+    required this.onSearchChanged,
+    required this.onTypeChanged,
+    required this.onStatusChanged,
+    required this.onCategoryChanged,
+    required this.onClearFilters,
+  });
+
+  final TextEditingController searchController;
+  final String type;
+  final String status;
+  final String category;
+  final List<String> categories;
+  final bool hasActiveFilters;
+  final VoidCallback onSearchChanged;
+  final ValueChanged<String> onTypeChanged;
+  final ValueChanged<String> onStatusChanged;
+  final ValueChanged<String> onCategoryChanged;
+  final VoidCallback onClearFilters;
+
+  @override
+  Widget build(BuildContext context) {
+    final categoryValue =
+        category == _Filter.all || categories.contains(category)
+            ? category
+            : _Filter.all;
+
+    return AppCard(
+      elevated: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: searchController,
+            onChanged: (_) => onSearchChanged(),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search_rounded),
+              hintText: 'ابحث بالاسم أو التصنيف أو الملاحظات',
+              suffixIcon: searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'مسح البحث',
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () {
+                        searchController.clear();
+                        onSearchChanged();
+                      },
+                    ),
+            ),
+          ),
+          const SizedBox(height: AppDimensions.spacing16),
+          const Text('النوع', style: AppTypography.labelMedium),
+          const SizedBox(height: AppDimensions.spacing8),
+          Wrap(
+            spacing: AppDimensions.spacing8,
+            runSpacing: AppDimensions.spacing8,
+            children: [
+              AppChoiceChip(
+                label: 'كل الأنواع',
+                selected: type == _Filter.all,
+                onTap: () => onTypeChanged(_Filter.all),
+              ),
+              AppChoiceChip(
+                label: 'إيراد',
+                icon: Icons.south_west_rounded,
+                selected: type == AppTransactionTypes.income,
+                onTap: () => onTypeChanged(AppTransactionTypes.income),
+              ),
+              AppChoiceChip(
+                label: 'مصروف',
+                icon: Icons.north_east_rounded,
+                selected: type == AppTransactionTypes.expense,
+                onTap: () => onTypeChanged(AppTransactionTypes.expense),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppDimensions.spacing16),
+          const Text('الحالة', style: AppTypography.labelMedium),
+          const SizedBox(height: AppDimensions.spacing8),
+          Wrap(
+            spacing: AppDimensions.spacing8,
+            runSpacing: AppDimensions.spacing8,
+            children: [
+              AppChoiceChip(
+                label: 'كل الحالات',
+                selected: status == _Filter.all,
+                onTap: () => onStatusChanged(_Filter.all),
+              ),
+              AppChoiceChip(
+                label: 'نشطة',
+                selected: status == AppStatuses.active,
+                onTap: () => onStatusChanged(AppStatuses.active),
+              ),
+              AppChoiceChip(
+                label: 'ملغاة',
+                selected: status == AppStatuses.cancelled,
+                onTap: () => onStatusChanged(AppStatuses.cancelled),
+              ),
+            ],
+          ),
+          if (categories.isNotEmpty) ...[
+            const SizedBox(height: AppDimensions.spacing16),
+            DropdownButtonFormField<String>(
+              key: ValueKey('category-$categoryValue'),
+              initialValue: categoryValue,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'التصنيف',
+                prefixIcon: Icon(Icons.category_outlined),
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: _Filter.all,
+                  child: Text('كل التصنيفات'),
+                ),
+                for (final item in categories)
+                  DropdownMenuItem(
+                    value: item,
+                    child: Text(
+                      _categoryLabel(item),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (next) {
+                if (next != null) onCategoryChanged(next);
+              },
+            ),
+          ],
+          if (hasActiveFilters) ...[
+            const SizedBox(height: AppDimensions.spacing8),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                onPressed: onClearFilters,
+                icon: const Icon(Icons.filter_alt_off_rounded),
+                label: const Text('مسح الفلاتر'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// القائمة المجمعة حسب اليوم
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DayGroup {
+  _DayGroup(this.day);
+
+  final DateTime day;
+  final List<TransactionModel> items = [];
+
+  /// صافي اليوم (الحركات النشطة فقط).
+  num get net => items
+      .where((item) => item.status == AppStatuses.active)
+      .fold<num>(
+        0,
+        (value, item) => item.type == AppTransactionTypes.income
+            ? value + item.amount
+            : value - item.amount,
+      );
+}
+
+List<_DayGroup> _groupByDay(List<TransactionModel> items) {
+  final groups = <String, _DayGroup>{};
+  for (final item in items) {
+    final d = item.createdAt;
+    final key = '${d.year}-${d.month}-${d.day}';
+    groups.putIfAbsent(key, () => _DayGroup(DateTime(d.year, d.month, d.day)))
+        .items
+        .add(item);
+  }
+  return groups.values.toList();
+}
+
+String _dayLabel(DateTime day) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final diff = today.difference(day).inDays;
+  if (diff == 0) return 'اليوم';
+  if (diff == 1) return 'أمس';
+  return AppFormatters.date(day);
+}
+
+class _DaySection extends StatelessWidget {
+  const _DaySection({
+    required this.group,
+    required this.canCancel,
+    required this.cancelling,
+    required this.onCancel,
+  });
+
+  final _DayGroup group;
+  final bool canCancel;
+  final bool cancelling;
   final ValueChanged<TransactionModel> onCancel;
 
   @override
   Widget build(BuildContext context) {
-    final active = all.where((item) => item.status == AppStatuses.active);
-    final income = active
-        .where((item) => item.type == AppTransactionTypes.income)
-        .fold<num>(0, (value, item) => value + item.amount);
-    final expense = active
-        .where((item) => item.type == AppTransactionTypes.expense)
-        .fold<num>(0, (value, item) => value + item.amount);
-    final width = MediaQuery.sizeOf(context).width;
+    final net = group.net;
+    final netColor = net > 0
+        ? AppColors.income
+        : net < 0
+            ? AppColors.expense
+            : AppColors.textSecondary;
 
-    return Center(
-      child: ConstrainedBox(
-        constraints:
-            const BoxConstraints(maxWidth: AppDimensions.maxContentWidth),
-        child: ListView(
-          padding: EdgeInsets.all(AppTypography.pagePaddingForWidth(width)),
-          children: [
-            Row(children: [
-              const Expanded(
-                child:
-                    Text('الحركات المالية', style: AppTypography.headlineLarge),
-              ),
-              if (canCreate)
-                FilledButton.icon(
-                  onPressed: onCreate,
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('إضافة حركة'),
-                ),
-            ]),
-            const SizedBox(height: AppDimensions.spacing4),
-            const Text('سجل الإيرادات والمصروفات المسجلة في النظام.',
-                style: AppTypography.bodySmall),
-            const SizedBox(height: AppDimensions.sectionSpacing),
-            _SummaryCards(income: income, expense: expense, count: all.length),
-            const SizedBox(height: AppDimensions.sectionSpacing),
-            _FiltersBar(
-              searchController: searchController,
-              type: type,
-              status: status,
-              onSearchChanged: onSearchChanged,
-              onTypeChanged: onTypeChanged,
-              onStatusChanged: onStatusChanged,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppDimensions.spacing16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(
+              top: AppDimensions.spacing4,
+              bottom: AppDimensions.spacing8,
             ),
-            const SizedBox(height: AppDimensions.spacing16),
-            Text('الحركات (${visible.length})',
-                style: AppTypography.headlineSmall),
-            const SizedBox(height: AppDimensions.spacing12),
-            if (visible.isEmpty)
-              const _EmptyTransactions()
-            else
-              ...visible.map((item) => Padding(
-                    padding: const EdgeInsets.only(
-                        bottom: AppDimensions.itemSpacing),
-                    child: _TransactionCard(
-                      transaction: item,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _dayLabel(group.day),
+                    style: AppTypography.titleMedium,
+                  ),
+                ),
+                Text(
+                  AppFormatters.amountSigned(net, showSign: true),
+                  style: AppTypography.titleMedium.copyWith(color: netColor),
+                ),
+              ],
+            ),
+          ),
+          AppCard(
+            elevated: true,
+            padding: EdgeInsets.zero,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
+              child: Column(
+                children: [
+                  for (var i = 0; i < group.items.length; i++) ...[
+                    _TransactionTile(
+                      transaction: group.items[i],
                       canCancel: canCancel,
                       cancelling: cancelling,
-                      onCancel: () => onCancel(item),
+                      onCancel: () => onCancel(group.items[i]),
                     ),
-                  )),
+                    if (i != group.items.length - 1)
+                      const Divider(
+                        indent: AppDimensions.cardPadding,
+                        endIndent: AppDimensions.cardPadding,
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TransactionTile extends StatefulWidget {
+  const _TransactionTile({
+    required this.transaction,
+    required this.canCancel,
+    required this.cancelling,
+    required this.onCancel,
+  });
+
+  final TransactionModel transaction;
+  final bool canCancel;
+  final bool cancelling;
+  final VoidCallback onCancel;
+
+  @override
+  State<_TransactionTile> createState() => _TransactionTileState();
+}
+
+class _TransactionTileState extends State<_TransactionTile> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final transaction = widget.transaction;
+    final income = transaction.type == AppTransactionTypes.income;
+    final cancelled = transaction.status == AppStatuses.cancelled;
+    final color = income ? AppColors.income : AppColors.expense;
+    final time = AppFormatters.toWesternDigits(
+      TimeOfDay.fromDateTime(transaction.createdAt).format(context),
+    );
+
+    return InkWell(
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppDimensions.cardPadding,
+          vertical: AppDimensions.spacing12,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                AppIconBadge(
+                  icon: income
+                      ? Icons.south_west_rounded
+                      : Icons.north_east_rounded,
+                  color: cancelled ? AppColors.disabled : color,
+                  background:
+                      cancelled ? AppColors.surfaceAlt : color.withAlpha(28),
+                ),
+                const SizedBox(width: AppDimensions.spacing12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _titleFor(transaction),
+                        style: AppTypography.titleMedium.copyWith(
+                          color: cancelled ? AppColors.textSecondary : null,
+                          decoration:
+                              cancelled ? TextDecoration.lineThrough : null,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: AppDimensions.spacing2),
+                      Text(
+                        '${_categoryLabel(transaction.category)} • $time',
+                        style: AppTypography.labelSmall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (cancelled) ...[
+                        const SizedBox(height: AppDimensions.spacing4),
+                        const AppStatusChip(
+                          label: 'ملغاة',
+                          color: AppColors.error,
+                          backgroundColor: AppColors.errorLight,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppDimensions.spacing8),
+                if (cancelled)
+                  Text(
+                    AppFormatters.amount(transaction.amount),
+                    style: AppTypography.titleMedium.copyWith(
+                      color: AppColors.textSecondary,
+                      decoration: TextDecoration.lineThrough,
+                    ),
+                  )
+                else
+                  AppAmountText(amount: transaction.amount, isIncome: income),
+                if (widget.canCancel && !cancelled)
+                  widget.cancelling
+                      ? const Padding(
+                          padding: EdgeInsets.all(AppDimensions.spacing12),
+                          child: SizedBox(
+                            width: AppDimensions.iconSmall,
+                            height: AppDimensions.iconSmall,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : PopupMenuButton<String>(
+                          tooltip: 'خيارات',
+                          icon: const Icon(Icons.more_vert_rounded),
+                          onSelected: (_) => widget.onCancel(),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem<String>(
+                              value: 'cancel',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.cancel_outlined,
+                                    color: AppColors.error,
+                                  ),
+                                  SizedBox(width: AppDimensions.spacing8),
+                                  Text('إلغاء الحركة'),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+              ],
+            ),
+            AnimatedSize(
+              duration: AppDurations.fast,
+              alignment: Alignment.topCenter,
+              child: _expanded
+                  ? _TransactionDetails(transaction: transaction)
+                  : const SizedBox(width: double.infinity),
+            ),
           ],
         ),
       ),
@@ -249,285 +839,106 @@ class _TransactionsView extends StatelessWidget {
   }
 }
 
-class _SummaryCards extends StatelessWidget {
-  const _SummaryCards({
-    required this.income,
-    required this.expense,
-    required this.count,
-  });
-  final num income;
-  final num expense;
-  final int count;
+class _TransactionDetails extends StatelessWidget {
+  const _TransactionDetails({required this.transaction});
 
-  @override
-  Widget build(BuildContext context) {
-    final cards = [
-      _SummaryCard('إجمالي الإيرادات', AppFormatters.amount(income),
-          AppColors.income, Icons.south_west_rounded),
-      _SummaryCard('إجمالي المصروفات', AppFormatters.amount(expense),
-          AppColors.expense, Icons.north_east_rounded),
-      _SummaryCard('الرصيد الصافي', AppFormatters.amount(income - expense),
-          AppColors.primary, Icons.account_balance_wallet_rounded),
-      _SummaryCard('عدد الحركات', AppFormatters.integer(count), AppColors.info,
-          Icons.receipt_long_rounded),
-    ];
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= AppDimensions.tabletBreakpoint
-            ? 4
-            : constraints.maxWidth >= AppDimensions.mobileBreakpoint
-                ? 2
-                : 1;
-        final cardWidth =
-            (constraints.maxWidth - AppDimensions.spacing12 * (columns - 1)) /
-                columns;
-        return Wrap(
-          spacing: AppDimensions.spacing12,
-          runSpacing: AppDimensions.spacing12,
-          children: cards
-              .map((card) => SizedBox(width: cardWidth, child: card))
-              .toList(),
-        );
-      },
-    );
-  }
-}
-
-class _SummaryCard extends StatelessWidget {
-  const _SummaryCard(this.label, this.value, this.color, this.icon);
-  final String label;
-  final String value;
-  final Color color;
-  final IconData icon;
-  @override
-  Widget build(BuildContext context) => AppCard(
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.all(AppDimensions.spacing8),
-            decoration: BoxDecoration(
-              color: color.withAlpha(28),
-              borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
-            ),
-            child: Icon(icon, color: color),
-          ),
-          const SizedBox(width: AppDimensions.spacing12),
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: AppTypography.labelMedium),
-              const SizedBox(height: AppDimensions.spacing4),
-              Text(value,
-                  style: AppTypography.titleLarge.copyWith(color: color),
-                  overflow: TextOverflow.ellipsis),
-            ]),
-          ),
-        ]),
-      );
-}
-
-class _FiltersBar extends StatelessWidget {
-  const _FiltersBar({
-    required this.searchController,
-    required this.type,
-    required this.status,
-    required this.onSearchChanged,
-    required this.onTypeChanged,
-    required this.onStatusChanged,
-  });
-  final TextEditingController searchController;
-  final String type;
-  final String status;
-  final VoidCallback onSearchChanged;
-  final ValueChanged<String> onTypeChanged;
-  final ValueChanged<String> onStatusChanged;
-
-  @override
-  Widget build(BuildContext context) => AppCard(
-        child: Wrap(
-          spacing: AppDimensions.spacing12,
-          runSpacing: AppDimensions.spacing12,
-          children: [
-            SizedBox(
-              width: 300,
-              child: TextField(
-                controller: searchController,
-                onChanged: (_) => onSearchChanged(),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search_rounded),
-                  hintText: 'ابحث بالاسم أو التصنيف أو الملاحظات',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ),
-            _FilterDropdown(
-              value: type,
-              label: 'النوع',
-              items: const {
-                _Filter.all: 'كل الأنواع',
-                AppTransactionTypes.income: 'إيراد',
-                AppTransactionTypes.expense: 'مصروف',
-              },
-              onChanged: onTypeChanged,
-            ),
-            _FilterDropdown(
-              value: status,
-              label: 'الحالة',
-              items: const {
-                _Filter.all: 'كل الحالات',
-                AppStatuses.active: 'نشطة',
-                AppStatuses.cancelled: 'ملغاة',
-              },
-              onChanged: onStatusChanged,
-            ),
-          ],
-        ),
-      );
-}
-
-class _FilterDropdown extends StatelessWidget {
-  const _FilterDropdown({
-    required this.value,
-    required this.label,
-    required this.items,
-    required this.onChanged,
-  });
-  final String value;
-  final String label;
-  final Map<String, String> items;
-  final ValueChanged<String> onChanged;
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 170,
-        child: DropdownButtonFormField<String>(
-          key: ValueKey(value),
-          initialValue: value,
-          decoration: InputDecoration(
-              labelText: label, border: const OutlineInputBorder()),
-          items: items.entries
-              .map((item) =>
-                  DropdownMenuItem(value: item.key, child: Text(item.value)))
-              .toList(),
-          onChanged: (next) {
-            if (next != null) onChanged(next);
-          },
-        ),
-      );
-}
-
-class _TransactionCard extends StatelessWidget {
-  const _TransactionCard({
-    required this.transaction,
-    required this.canCancel,
-    required this.cancelling,
-    required this.onCancel,
-  });
   final TransactionModel transaction;
-  final bool canCancel;
-  final bool cancelling;
-  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
     final income = transaction.type == AppTransactionTypes.income;
-    final cancelled = transaction.status == AppStatuses.cancelled;
-    final color = income ? AppColors.income : AppColors.expense;
-    return AppCard(
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          width: AppDimensions.spacing48,
-          height: AppDimensions.spacing48,
-          decoration: BoxDecoration(
-            color: color.withAlpha(28),
-            borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+    final notes = transaction.notes.trim();
+
+    return Container(
+      margin: const EdgeInsets.only(top: AppDimensions.spacing12),
+      padding: const EdgeInsets.all(AppDimensions.spacing12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AppInfoRow(label: 'النوع', value: income ? 'إيراد' : 'مصروف'),
+          AppInfoRow(
+            label: 'التصنيف',
+            value: _categoryLabel(transaction.category),
           ),
-          child: Icon(
-            income ? Icons.south_west_rounded : Icons.north_east_rounded,
-            color: color,
+          AppInfoRow(
+            label: 'طريقة الدفع',
+            value: _paymentLabel(transaction.paymentMethod),
           ),
-        ),
-        const SizedBox(width: AppDimensions.spacing12),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(
-                  child: Text(_titleFor(transaction),
-                      style: AppTypography.titleLarge,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis)),
-              AppAmountText(amount: transaction.amount, isIncome: income),
-            ]),
-            const SizedBox(height: AppDimensions.spacing4),
-            Wrap(
-                spacing: AppDimensions.spacing8,
-                runSpacing: AppDimensions.spacing4,
-                children: [
-                  AppStatusChip(
-                      label: income ? 'إيراد' : 'مصروف',
-                      color: color,
-                      backgroundColor: color.withAlpha(28)),
-                  AppStatusChip(
-                      label: cancelled ? 'ملغاة' : 'نشطة',
-                      color: cancelled ? AppColors.error : AppColors.success,
-                      backgroundColor:
-                          (cancelled ? AppColors.error : AppColors.success)
-                              .withAlpha(28)),
-                  if (transaction.category.isNotEmpty)
-                    AppStatusChip(
-                        label: _categoryLabel(transaction.category),
-                        color: AppColors.textSecondary,
-                        backgroundColor: AppColors.surfaceAlt),
-                ]),
-            if (transaction.notes.trim().isNotEmpty) ...[
-              const SizedBox(height: AppDimensions.spacing8),
-              Text(transaction.notes,
-                  style: AppTypography.bodySmall,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
-            ],
-            const SizedBox(height: AppDimensions.spacing8),
-            Row(children: [
-              const Icon(Icons.schedule_rounded,
-                  size: AppDimensions.iconSmall,
-                  color: AppColors.textSecondary),
-              const SizedBox(width: AppDimensions.spacing4),
-              Expanded(
-                  child: Text(AppFormatters.dateTime(transaction.createdAt),
-                      style: AppTypography.labelSmall)),
-              if (canCancel && !cancelled)
-                TextButton.icon(
-                  onPressed: cancelling ? null : onCancel,
-                  icon: cancelling
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.cancel_outlined),
-                  label: const Text('إلغاء'),
-                ),
-            ]),
-          ]),
-        ),
-      ]),
+          AppInfoRow(
+            label: 'التاريخ',
+            value: AppFormatters.dateTime(transaction.createdAt),
+          ),
+          if (notes.isNotEmpty) AppInfoRow(label: 'الملاحظات', value: notes),
+        ],
+      ),
     );
   }
 }
 
 class _EmptyTransactions extends StatelessWidget {
-  const _EmptyTransactions();
+  const _EmptyTransactions({
+    required this.hasActiveFilters,
+    required this.onClearFilters,
+  });
+
+  final bool hasActiveFilters;
+  final VoidCallback onClearFilters;
+
   @override
-  Widget build(BuildContext context) => const AppCard(
-        child: Padding(
-          padding: EdgeInsets.all(AppDimensions.spacing32),
-          child: Column(children: [
-            Icon(Icons.receipt_long_outlined,
-                size: AppDimensions.spacing48, color: AppColors.disabled),
-            SizedBox(height: AppDimensions.spacing12),
-            Text('لا توجد حركات مطابقة للبحث أو الفلاتر',
-                style: AppTypography.bodyLarge),
-          ]),
+  Widget build(BuildContext context) {
+    return AppCard(
+      elevated: true,
+      child: Padding(
+        padding: const EdgeInsets.all(AppDimensions.spacing32),
+        child: Column(
+          children: [
+            const Icon(
+              Icons.receipt_long_outlined,
+              size: AppDimensions.spacing48,
+              color: AppColors.disabled,
+            ),
+            const SizedBox(height: AppDimensions.spacing12),
+            Text(
+              hasActiveFilters
+                  ? 'لا توجد حركات مطابقة للبحث أو الفلاتر'
+                  : 'لا توجد حركات مسجلة بعد',
+              style: AppTypography.bodyLarge,
+              textAlign: TextAlign.center,
+            ),
+            if (hasActiveFilters) ...[
+              const SizedBox(height: AppDimensions.spacing12),
+              TextButton.icon(
+                onPressed: onClearFilters,
+                icon: const Icon(Icons.filter_alt_off_rounded),
+                label: const Text('مسح الفلاتر'),
+              ),
+            ],
+          ],
         ),
-      );
+      ),
+    );
+  }
+}
+
+String _paymentLabel(String method) {
+  switch (method) {
+    case AppPaymentMethods.cash:
+      return 'نقدي';
+    case AppPaymentMethods.vodafoneCash:
+      return 'فودافون كاش';
+    case AppPaymentMethods.bankTransfer:
+      return 'تحويل بنكي';
+    case AppPaymentMethods.cheque:
+      return 'شيك';
+    case AppPaymentMethods.other:
+      return 'أخرى';
+    default:
+      return method.isEmpty ? '—' : method;
+  }
 }
 
 class _CreateTransactionDialog extends StatefulWidget {
@@ -557,24 +968,9 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     super.dispose();
   }
 
-  List<String> _categoriesFor(EnvelopeModel? envelope) {
-    if (_type == AppTransactionTypes.income) {
-      final customIncome = sl.isRegistered<CategoriesService>()
-          ? sl<CategoriesService>().incomeCategories.map((c) => c.id).toList()
-          : <String>[];
-      return {...AppIncomeCategories.creatable, ...customIncome}.toList();
-    }
-    // إذا كان الظرف مخصصاً، يسمح فقط بالتصنيفات المحددة له
-    if (envelope != null &&
-        envelope.fundType == AppFundTypes.restricted &&
-        envelope.allowedExpenseCategories.isNotEmpty) {
-      return envelope.allowedExpenseCategories;
-    }
-    final customExpense = sl.isRegistered<CategoriesService>()
-        ? sl<CategoriesService>().expenseCategories.map((c) => c.id).toList()
-        : <String>[];
-    return {...AppExpenseCategories.creatable, ...customExpense}.toList();
-  }
+  List<String> get _categories => _type == AppTransactionTypes.income
+      ? AppIncomeCategories.creatable
+      : AppExpenseCategories.creatable;
 
   Future<void> _save(List<EnvelopeModel> envelopes) async {
     if (!_formKey.currentState!.validate()) return;
@@ -584,19 +980,6 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     if (envelope == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('اختر ظرفًا ماليًا صالحًا.')),
-      );
-      return;
-    }
-    if (_type == AppTransactionTypes.expense &&
-        envelope.fundType == AppFundTypes.restricted &&
-        !envelope.allowedExpenseCategories.contains(_category)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'هذا الظرف مخصص ولا يسمح إلا بالتصنيفات التالية: '
-            '${envelope.allowedExpenseCategories.map(_categoryLabel).join("، ")}',
-          ),
-        ),
       );
       return;
     }
@@ -672,14 +1055,6 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
               if (envelopes.isEmpty) {
                 return const Text('أنشئ ظرفًا ماليًا نشطًا أولًا لإضافة حركة.');
               }
-
-              final selectedEnvelopeIndex =
-                  envelopes.indexWhere((item) => item.id == _envelopeId);
-              final selectedEnvelope = selectedEnvelopeIndex == -1
-                  ? null
-                  : envelopes[selectedEnvelopeIndex];
-              final availableCategories = _categoriesFor(selectedEnvelope);
-
               return SingleChildScrollView(
                 child: Form(
                   key: _formKey,
@@ -717,41 +1092,23 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
                           .map((item) => DropdownMenuItem(
                                 value: item.id,
                                 child: Text(
-                                    '${item.name}${item.fundType == AppFundTypes.restricted ? " (مخصص)" : ""} — ${AppFormatters.amount(item.currentBalance)}'),
+                                    '${item.name} — ${AppFormatters.amount(item.currentBalance)}'),
                               ))
                           .toList(),
                       validator: (value) => value == null ? 'اختر الظرف' : null,
                       onChanged: _saving
                           ? null
-                          : (value) => setState(() {
-                                _envelopeId = value;
-                                final newEnv = envelopes.firstWhere(
-                                  (e) => e.id == value,
-                                  orElse: () => envelopes.first,
-                                );
-                                final allowed = _categoriesFor(newEnv);
-                                if (_category != null && !allowed.contains(_category)) {
-                                  _category = null;
-                                }
-                              }),
+                          : (value) => setState(() => _envelopeId = value),
                     ),
                     const SizedBox(height: AppDimensions.spacing12),
                     DropdownButtonFormField<String>(
-                      key: ValueKey(
-                          'category-$_type-$_envelopeId-$_category-${availableCategories.length}'),
-                      initialValue: availableCategories.contains(_category)
-                          ? _category
-                          : null,
-                      decoration: InputDecoration(
+                      key: ValueKey('category-$_type-$_category'),
+                      initialValue: _category,
+                      decoration: const InputDecoration(
                         labelText: 'التصنيف',
-                        helperText: _type == AppTransactionTypes.expense &&
-                                selectedEnvelope?.fundType ==
-                                    AppFundTypes.restricted
-                            ? 'ظرف مخصص: محصور في بنود الصرف المحددة له فقط'
-                            : null,
-                        border: const OutlineInputBorder(),
+                        border: OutlineInputBorder(),
                       ),
-                      items: availableCategories
+                      items: _categories
                           .map((item) => DropdownMenuItem(
                                 value: item,
                                 child: Text(_categoryLabel(item)),
@@ -911,7 +1268,6 @@ String _categoryLabel(String category) {
     case AppExpenseCategories.otherExpense:
       return 'مصروف آخر';
     default:
-      if (category.isEmpty) return 'حركة مالية';
-      return categoryLabel(category);
+      return category.isEmpty ? 'حركة مالية' : category;
   }
 }

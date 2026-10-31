@@ -78,6 +78,8 @@ class FinancialOperationsService {
     switch (operationName) {
       case 'createTransaction':
         return _createTransaction(transaction, data, uid);
+      case 'updateTransaction':
+        return _updateTransaction(transaction, data, uid);
       case 'cancelTransaction':
         return _cancelTransaction(transaction, data, uid);
       case 'transferBetweenEnvelopes':
@@ -206,6 +208,47 @@ class FinancialOperationsService {
     });
 
     return {'transactionId': txRef.id};
+  }
+
+  /// يعدّل البيانات الوصفية فقط؛ لا يمكن تغيير المبلغ أو نوع الحركة أو الظرف
+  /// لأن ذلك يستلزم تسوية مالية جديدة في الرصيد.
+  Future<Map<String, dynamic>> _updateTransaction(
+    Transaction tx,
+    Map<String, dynamic> data,
+    String uid,
+  ) async {
+    final transactionId = data['transactionId'] as String?;
+    final name = data['name'] as String?;
+    final paymentMethod = data['paymentMethod'] as String?;
+    final notes = data['notes'] as String? ?? '';
+
+    if (transactionId == null || transactionId.isEmpty) {
+      throw const ValidationException('معرّف الحركة مطلوب');
+    }
+    if (name == null || name.trim().length < 3) {
+      throw const ValidationException('أدخل اسمًا من 3 أحرف على الأقل');
+    }
+    if (paymentMethod == null || paymentMethod.isEmpty) {
+      throw const ValidationException('اختر طريقة الدفع أو التحصيل');
+    }
+
+    final ref = _firestore.collection('transactions').doc(transactionId);
+    final snapshot = await tx.get(ref);
+    if (!snapshot.exists) {
+      throw const ServerException('الحركة المالية غير موجودة');
+    }
+    if (snapshot.data()?['status'] != 'active') {
+      throw const OperationRejectedException('لا يمكن تعديل حركة ملغاة');
+    }
+
+    tx.update(ref, <String, dynamic>{
+      'name': name.trim(),
+      'paymentMethod': paymentMethod,
+      'notes': notes.trim(),
+      'updatedBy': uid,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    return {'transactionId': transactionId};
   }
 
   Future<Map<String, dynamic>> _cancelTransaction(

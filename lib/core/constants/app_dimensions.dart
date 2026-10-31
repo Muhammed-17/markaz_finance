@@ -38,6 +38,11 @@ abstract final class AppDimensions {
   static const double appBarHeight = 64;
   static const double chipHeight = 32;
   static const double avatarRadius = 22;
+  static const double avatarRadiusLarge = 34;
+  static const double iconBadgeSize = 44;
+  static const double chartHeight = 168;
+  static const double chartMinSlotWidth = 52;
+  static const double chartBarWidth = 12;
 
   // Layout
   static const double maxContentWidth = 1440;

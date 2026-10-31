@@ -296,7 +296,10 @@ service cloud.firestore {
         // 3) تحديث الرصيد — اقتران ثنائي إلزامي بحركة ظرف جديدة في نفس الدفعة
         (onlyKeys(['currentBalance', 'lastEnvTxId'])
           && request.resource.data.diff(resource.data).affectedKeys().hasAll(['currentBalance', 'lastEnvTxId'])
-          && (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
+          && (hasFinancialPerm('create') || hasFinancialPerm('cancel')
+              || (callerExistsAndActive()
+                  && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.type in ['income', 'expense']
+                  && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.transactionId is string))
           && isBalance(request.resource.data.currentBalance)
           && isStr(request.resource.data.lastEnvTxId, 1, 128)
           && envelopeBalancePaired(envelopeId, request.resource.data.lastEnvTxId))
@@ -340,7 +343,7 @@ service cloud.firestore {
           && getAfter(envPath).data.currentBalance == d.amount;
       }
 
-      allow create: if hasFinancialPerm('create')
+      allow create: if callerExistsAndActive()
         && createKeys(['centerId', 'branchId', 'envelopeId', 'type', 'category',
                        'name', 'amount', 'paymentMethod', 'forMonth', 'status',
                        'employeeLoanId', 'attachmentPaths', 'notes', 'createdAt'])
@@ -391,11 +394,25 @@ service cloud.firestore {
         && (txnPaired(request.resource.data)
             || txnOpeningBalancePaired(request.resource.data));
 
-      // الإلغاء فقط: تعديل حالة واحد من نشطة إلى ملغاة — صلاحية cancel
-      allow update: if hasFinancialPerm('cancel')
-        && onlyKeys(['status'])
-        && resource.data.status == 'active'
-        && request.resource.data.status == 'cancelled';
+      // تعديل البيانات الوصفية للحركة فقط — صلاحية update.
+      // المبلغ والنوع والظرف لا تتغير لأنها تؤثر في الرصيد.
+      allow update: if (hasFinancialPerm('update')
+          && onlyKeys(['name', 'paymentMethod', 'notes', 'updatedBy', 'updatedAt'])
+          && resource.data.status == 'active'
+          && request.resource.data.status == 'active'
+          && isStr(request.resource.data.name, 3, 200)
+          && request.resource.data.paymentMethod in
+             ['cash', 'vodafone_cash', 'bank_transfer', 'cheque', 'other']
+          && request.resource.data.notes is string
+          && request.resource.data.updatedBy == request.auth.uid
+          && request.resource.data.updatedAt is timestamp)
+        // الإلغاء: تغيير الحالة فقط — صلاحية cancel.
+        || (hasFinancialPerm('cancel')
+          && onlyKeys(['status', 'cancelledBy', 'updatedAt'])
+          && resource.data.status == 'active'
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.cancelledBy == request.auth.uid
+          && request.resource.data.updatedAt is timestamp);
 
       allow delete: if false;
     }
@@ -453,7 +470,10 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 3] + '_out')).data.envelopeId != d.envelopeId);
       }
 
-      allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
+      allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel')
+          || (callerExistsAndActive()
+              && request.resource.data.type in ['income', 'expense']
+              && request.resource.data.transactionId is string))
         && createKeys(['envelopeId', 'transactionId', 'type', 'amount',
                        'notes', 'createdBy', 'createdAt'])
         && isStr(request.resource.data.envelopeId, 1, 128)
