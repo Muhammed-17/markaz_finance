@@ -21,6 +21,37 @@ class AppNavItem {
   final IconData? selectedIcon;
 }
 
+/// عناصر تسجّلها صفحة داخل الهيكل: أزرار AppBar وزر عائم (FAB) اختياري
+/// (مثل «إضافة»). الصفحة تستدعي [set] وتنظّف بـ [clear] عند إزالتها؛
+/// والمالك يمنع تعارض صفحتين عند التنقل بينهما.
+class AppBarActions extends ChangeNotifier {
+  AppBarActions._();
+
+  static final AppBarActions instance = AppBarActions._();
+
+  List<Widget> _actions = const [];
+  Widget? _fab;
+  Object? _owner;
+
+  List<Widget> get actions => _actions;
+  Widget? get fab => _fab;
+
+  void set(Object owner, {List<Widget> actions = const [], Widget? fab}) {
+    _owner = owner;
+    _actions = actions;
+    _fab = fab;
+    notifyListeners();
+  }
+
+  void clear(Object owner) {
+    if (_owner != owner) return;
+    _owner = null;
+    _actions = const [];
+    _fab = null;
+    notifyListeners();
+  }
+}
+
 /// الهيكل العام الموحد للتطبيق: شريط جانبي على الشاشات الكبيرة
 /// وقائمة جانبية (Drawer) على الشاشات الصغيرة، مع شريط حالة الاتصال.
 class AppShell extends StatefulWidget {
@@ -89,35 +120,53 @@ class _AppShellState extends State<AppShell> {
       ],
     );
 
+    // إجراءات الصفحة الحالية في AppBar (تتحدث دون إعادة بناء المحتوى).
     if (useSidebar) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.appBarTitle)),
-        body: content,
+      return ListenableBuilder(
+        listenable: AppBarActions.instance,
+        builder: (context, _) => Scaffold(
+          appBar: AppBar(
+            title: Text(widget.appBarTitle),
+            actions: _barActions(),
+          ),
+          floatingActionButton: AppBarActions.instance.fab,
+          body: content,
+        ),
       );
     }
 
     // موبايل: Drawer
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.appBarTitle),
-        leading: Builder(
-          builder: (drawerContext) => IconButton(
-            icon: const Icon(Icons.menu_rounded),
-            onPressed: () => Scaffold.of(drawerContext).openDrawer(),
+    return ListenableBuilder(
+      listenable: AppBarActions.instance,
+      builder: (context, _) => Scaffold(
+        appBar: AppBar(
+          title: Text(widget.appBarTitle),
+          actions: _barActions(),
+          leading: Builder(
+            builder: (drawerContext) => IconButton(
+              icon: const Icon(Icons.menu_rounded),
+              onPressed: () => Scaffold.of(drawerContext).openDrawer(),
+            ),
           ),
         ),
+        drawer: _Sidebar(
+          navItems: widget.navItems,
+          selectedIndex: selectedIndex,
+          profileName: widget.currentProfileName,
+          profileRole: widget.currentProfileRole,
+          onSignOut: widget.onSignOut,
+          isDrawer: true,
+        ),
+        floatingActionButton: AppBarActions.instance.fab,
+        body: content,
       ),
-      drawer: _Sidebar(
-        navItems: widget.navItems,
-        selectedIndex: selectedIndex,
-        profileName: widget.currentProfileName,
-        profileRole: widget.currentProfileRole,
-        onSignOut: widget.onSignOut,
-        isDrawer: true,
-      ),
-      body: content,
     );
   }
+
+  List<Widget> _barActions() => [
+        ...AppBarActions.instance.actions,
+        const SizedBox(width: AppDimensions.spacing8),
+      ];
 
   int _currentIndex(String location) {
     int best = 0;

@@ -168,6 +168,30 @@ class FinancialOperationsService {
       );
     }
 
+    // المركز/الفرع: اختياريان من النموذج؛ بدونهما يبقى مركز الظرف والفرع فارغًا.
+    var txCenterId = envelopeData['centerId'];
+    String? txBranchId;
+    final requestedCenter = (data['centerId'] as String?)?.trim();
+    final requestedBranch = (data['branchId'] as String?)?.trim();
+    if (requestedCenter != null && requestedCenter.isNotEmpty) {
+      final centerSnap =
+          await tx.get(_firestore.collection('centers').doc(requestedCenter));
+      if (!centerSnap.exists) {
+        throw const ValidationException('المركز المختار غير موجود');
+      }
+      txCenterId = requestedCenter;
+      if (requestedBranch != null && requestedBranch.isNotEmpty) {
+        final branchSnap = await tx
+            .get(_firestore.collection('branches').doc(requestedBranch));
+        if (!branchSnap.exists ||
+            branchSnap.data()?['centerId'] != requestedCenter) {
+          throw const ValidationException(
+              'الفرع المختار غير موجود أو لا يتبع المركز المختار');
+        }
+        txBranchId = requestedBranch;
+      }
+    }
+
     final newBalance =
         type == 'income' ? currentBalance + amount : currentBalance - amount;
 
@@ -177,8 +201,8 @@ class FinancialOperationsService {
     final now = FieldValue.serverTimestamp();
 
     tx.set(txRef, <String, dynamic>{
-      'centerId': envelopeData['centerId'],
-      'branchId': null,
+      'centerId': txCenterId,
+      'branchId': txBranchId,
       'envelopeId': envelopeId,
       'type': type,
       'category': category,

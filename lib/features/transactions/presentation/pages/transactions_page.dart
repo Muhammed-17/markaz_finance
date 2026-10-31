@@ -17,7 +17,10 @@ import '../../../../core/widgets/app_amount_text.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_error_view.dart';
 import '../../../../core/widgets/app_page_widgets.dart';
+import '../../../../core/widgets/app_shell.dart' show AppBarActions;
 import '../../../auth/presentation/bloc/auth_bloc.dart';
+import '../../../branches/data/models/branch_model.dart';
+import '../../../centers/data/models/center_model.dart';
 
 /// سجل الحركات النقدية الفعلي؛ البحث والتصفية محليان لتجنب فهارس مركبة جديدة.
 /// التصميم: ملخص سريع، فلاتر بشرائح، وقائمة مجمعة حسب اليوم مع تفاصيل قابلة للتوسيع.
@@ -33,19 +36,50 @@ class _TransactionsPageState extends State<TransactionsPage> {
   String _type = _Filter.all;
   String _status = _Filter.all;
   String _category = _Filter.all;
+  String _center = _Filter.all;
+  String _branch = _Filter.all;
+  String _envelope = _Filter.all;
   bool _newestFirst = true;
-  bool _cancelling = false;
+  /// معرّف الحركة قيد الإلغاء حاليًا (المؤشر يظهر في بطاقتها وحدها).
+  String? _cancellingId;
+
+  bool? _syncedCanCreate;
 
   @override
   void dispose() {
     _searchController.dispose();
+    // التنظيف بعد الإطار: الإشعار أثناء تفكيك الشجرة غير مسموح.
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => AppBarActions.instance.clear(this));
     super.dispose();
+  }
+
+  /// زر «إضافة حركة» العائم في الهيكل العام (لمن يملك صلاحية الإنشاء فقط).
+  void _syncCreateAction(bool canCreate) {
+    if (_syncedCanCreate == canCreate) return;
+    _syncedCanCreate = canCreate;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      AppBarActions.instance.set(
+        this,
+        fab: canCreate
+            ? FloatingActionButton.extended(
+                onPressed: _showCreateTransaction,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('إضافة حركة'),
+              )
+            : null,
+      );
+    });
   }
 
   bool get _hasActiveFilters =>
       _type != _Filter.all ||
       _status != _Filter.all ||
       _category != _Filter.all ||
+      _center != _Filter.all ||
+      _branch != _Filter.all ||
+      _envelope != _Filter.all ||
       _searchController.text.trim().isNotEmpty;
 
   void _clearFilters() {
@@ -54,6 +88,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
       _type = _Filter.all;
       _status = _Filter.all;
       _category = _Filter.all;
+      _center = _Filter.all;
+      _branch = _Filter.all;
+      _envelope = _Filter.all;
     });
   }
 
@@ -66,6 +103,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
       return (_type == _Filter.all || item.type == _type) &&
           (_status == _Filter.all || item.status == _status) &&
           (_category == _Filter.all || item.category == _category) &&
+          (_center == _Filter.all || item.centerId == _center) &&
+          (_branch == _Filter.all || item.branchId == _branch) &&
+          (_envelope == _Filter.all || item.envelopeId == _envelope) &&
           (search.isEmpty || haystack.contains(search));
     }).toList()
       ..sort(
@@ -99,7 +139,8 @@ class _TransactionsPageState extends State<TransactionsPage> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    setState(() => _cancelling = true);
+    if (_cancellingId != null) return;
+    setState(() => _cancellingId = transaction.id);
     try {
       await sl<FinancialOperationsService>().call(
         AppFunctions.cancelTransaction,
@@ -117,7 +158,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
         );
       }
     } finally {
-      if (mounted) setState(() => _cancelling = false);
+      if (mounted) setState(() => _cancellingId = null);
     }
   }
 
@@ -134,6 +175,9 @@ class _TransactionsPageState extends State<TransactionsPage> {
       builder: (context, authState) {
         final profile =
             authState is AuthAuthenticated ? authState.profile : null;
+        _syncCreateAction(
+          PermissionService.can(profile, PermissionAction.create),
+        );
         if (!PermissionService.isActive(profile)) {
           return const AppErrorView(
             message: 'ليس لديك صلاحية عرض الحركات المالية.',
@@ -161,21 +205,27 @@ class _TransactionsPageState extends State<TransactionsPage> {
               type: _type,
               status: _status,
               category: _category,
+              center: _center,
+              branch: _branch,
+              envelope: _envelope,
               newestFirst: _newestFirst,
               hasActiveFilters: _hasActiveFilters,
-              cancelling: _cancelling,
-              canCreate:
-                  PermissionService.can(profile, PermissionAction.create),
+              cancellingId: _cancellingId,
               canCancel:
                   PermissionService.can(profile, PermissionAction.cancel),
               onSearchChanged: () => setState(() {}),
               onTypeChanged: (value) => setState(() => _type = value),
               onStatusChanged: (value) => setState(() => _status = value),
               onCategoryChanged: (value) => setState(() => _category = value),
+              onCenterChanged: (value) => setState(() {
+                _center = value;
+                _branch = _Filter.all;
+              }),
+              onBranchChanged: (value) => setState(() => _branch = value),
+              onEnvelopeChanged: (value) => setState(() => _envelope = value),
               onToggleSort: () =>
                   setState(() => _newestFirst = !_newestFirst),
               onClearFilters: _clearFilters,
-              onCreate: _showCreateTransaction,
               onCancel: _cancel,
             );
           },
@@ -193,18 +243,22 @@ class _TransactionsView extends StatelessWidget {
     required this.type,
     required this.status,
     required this.category,
+    required this.center,
+    required this.branch,
+    required this.envelope,
     required this.newestFirst,
     required this.hasActiveFilters,
-    required this.cancelling,
-    required this.canCreate,
+    required this.cancellingId,
     required this.canCancel,
     required this.onSearchChanged,
     required this.onTypeChanged,
     required this.onStatusChanged,
     required this.onCategoryChanged,
+    required this.onCenterChanged,
+    required this.onBranchChanged,
+    required this.onEnvelopeChanged,
     required this.onToggleSort,
     required this.onClearFilters,
-    required this.onCreate,
     required this.onCancel,
   });
 
@@ -214,18 +268,22 @@ class _TransactionsView extends StatelessWidget {
   final String type;
   final String status;
   final String category;
+  final String center;
+  final String branch;
+  final String envelope;
   final bool newestFirst;
   final bool hasActiveFilters;
-  final bool cancelling;
-  final bool canCreate;
+  final String? cancellingId;
   final bool canCancel;
   final VoidCallback onSearchChanged;
   final ValueChanged<String> onTypeChanged;
   final ValueChanged<String> onStatusChanged;
   final ValueChanged<String> onCategoryChanged;
+  final ValueChanged<String> onCenterChanged;
+  final ValueChanged<String> onBranchChanged;
+  final ValueChanged<String> onEnvelopeChanged;
   final VoidCallback onToggleSort;
   final VoidCallback onClearFilters;
-  final VoidCallback onCreate;
   final ValueChanged<TransactionModel> onCancel;
 
   num _sum(Iterable<TransactionModel> items, String type) => items
@@ -251,19 +309,6 @@ class _TransactionsView extends StatelessWidget {
 
     return AppPageScroll(
       children: [
-        AppPageHeader(
-          title: 'الحركات المالية',
-          subtitle: 'سجل الإيرادات والمصروفات المسجلة في النظام.',
-          actions: [
-            if (canCreate)
-              FilledButton.icon(
-                onPressed: onCreate,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('إضافة حركة'),
-              ),
-          ],
-        ),
-        const SizedBox(height: AppDimensions.sectionSpacing),
         _SummaryTiles(income: income, expense: expense, count: all.length),
         const SizedBox(height: AppDimensions.sectionSpacing),
         _FiltersCard(
@@ -272,11 +317,17 @@ class _TransactionsView extends StatelessWidget {
           status: status,
           category: category,
           categories: categories,
+          center: center,
+          branch: branch,
+          envelope: envelope,
           hasActiveFilters: hasActiveFilters,
           onSearchChanged: onSearchChanged,
           onTypeChanged: onTypeChanged,
           onStatusChanged: onStatusChanged,
           onCategoryChanged: onCategoryChanged,
+          onCenterChanged: onCenterChanged,
+          onBranchChanged: onBranchChanged,
+          onEnvelopeChanged: onEnvelopeChanged,
           onClearFilters: onClearFilters,
         ),
         const SizedBox(height: AppDimensions.sectionSpacing),
@@ -320,10 +371,11 @@ class _TransactionsView extends StatelessWidget {
             _DaySection(
               group: group,
               canCancel: canCancel,
-              cancelling: cancelling,
+              cancellingId: cancellingId,
               onCancel: onCancel,
             ),
-        const SizedBox(height: AppDimensions.sectionSpacing),
+        // مساحة سفلية حتى لا يغطي الزر العائم آخر حركة.
+        const SizedBox(height: 88),
       ],
     );
   }
@@ -333,6 +385,8 @@ class _TransactionsView extends StatelessWidget {
 // الملخص
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// ملخص الحركات في بطاقة بارزة واحدة: الصافي كرقم رئيسي، شريط يوضح نسبة
+/// الإيراد إلى المصروف، ثم الإيرادات والمصروفات وعدد الحركات.
 class _SummaryTiles extends StatelessWidget {
   const _SummaryTiles({
     required this.income,
@@ -347,41 +401,79 @@ class _SummaryTiles extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final net = income - expense;
-    return AppResponsiveGrid(
-      minItemWidth: 240,
-      children: [
-        AppMetricTile(
-          label: 'إجمالي الإيرادات',
-          value: AppFormatters.amount(income),
-          icon: Icons.south_west_rounded,
-          color: AppColors.income,
-          background: AppColors.incomeLight,
-          valueColor: AppColors.income,
-        ),
-        AppMetricTile(
-          label: 'إجمالي المصروفات',
-          value: AppFormatters.amount(expense),
-          icon: Icons.north_east_rounded,
-          color: AppColors.expense,
-          background: AppColors.expenseLight,
-          valueColor: AppColors.expense,
-        ),
-        AppMetricTile(
-          label: 'الرصيد الصافي',
-          value: AppFormatters.amountSigned(net),
-          icon: Icons.account_balance_wallet_rounded,
-          color: AppColors.primary,
-          background: AppColors.primaryLight,
-          valueColor: net < 0 ? AppColors.expense : AppColors.primaryDark,
-        ),
-        AppMetricTile(
-          label: 'عدد الحركات',
-          value: AppFormatters.integer(count),
-          icon: Icons.receipt_long_rounded,
-          color: AppColors.info,
-          background: AppColors.infoLight,
-        ),
-      ],
+    final total = income + expense;
+    final incomeFlex = total <= 0 ? 1 : (income / total * 1000).round();
+    final expenseFlex = total <= 0 ? 1 : (expense / total * 1000).round();
+
+    return AppHeroCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'الرصيد الصافي للحركات',
+                  style: AppTypography.titleLarge.copyWith(
+                    color: AppColors.onHeroMuted,
+                  ),
+                ),
+              ),
+              AppHeroPill(label: '${AppFormatters.integer(count)} حركة'),
+            ],
+          ),
+          const SizedBox(height: AppDimensions.spacing12),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              AppFormatters.amountSigned(net),
+              style: AppTypography.displayLarge.copyWith(
+                color: AppColors.textOnPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: AppDimensions.spacing16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusSmall),
+            child: SizedBox(
+              height: AppDimensions.spacing8,
+              child: total <= 0
+                  ? const ColoredBox(color: AppColors.onHeroSurface)
+                  : Row(
+                      children: [
+                        Expanded(
+                          flex: incomeFlex,
+                          child: const ColoredBox(color: AppColors.successLight),
+                        ),
+                        const SizedBox(width: 2),
+                        Expanded(
+                          flex: expenseFlex,
+                          child: const ColoredBox(color: AppColors.warning),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+          const SizedBox(height: AppDimensions.spacing16),
+          AppResponsiveGrid(
+            minItemWidth: 160,
+            maxColumns: 2,
+            children: [
+              AppHeroMetric(
+                label: 'إجمالي الإيرادات',
+                value: AppFormatters.amount(income),
+                icon: Icons.south_west_rounded,
+              ),
+              AppHeroMetric(
+                label: 'إجمالي المصروفات',
+                value: AppFormatters.amount(expense),
+                icon: Icons.north_east_rounded,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -433,11 +525,17 @@ class _FiltersCard extends StatelessWidget {
     required this.status,
     required this.category,
     required this.categories,
+    required this.center,
+    required this.branch,
+    required this.envelope,
     required this.hasActiveFilters,
     required this.onSearchChanged,
     required this.onTypeChanged,
     required this.onStatusChanged,
     required this.onCategoryChanged,
+    required this.onCenterChanged,
+    required this.onBranchChanged,
+    required this.onEnvelopeChanged,
     required this.onClearFilters,
   });
 
@@ -446,11 +544,17 @@ class _FiltersCard extends StatelessWidget {
   final String status;
   final String category;
   final List<String> categories;
+  final String center;
+  final String branch;
+  final String envelope;
   final bool hasActiveFilters;
   final VoidCallback onSearchChanged;
   final ValueChanged<String> onTypeChanged;
   final ValueChanged<String> onStatusChanged;
   final ValueChanged<String> onCategoryChanged;
+  final ValueChanged<String> onCenterChanged;
+  final ValueChanged<String> onBranchChanged;
+  final ValueChanged<String> onEnvelopeChanged;
   final VoidCallback onClearFilters;
 
   @override
@@ -533,6 +637,15 @@ class _FiltersCard extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: AppDimensions.spacing16),
+          _ScopeFilters(
+            center: center,
+            branch: branch,
+            envelope: envelope,
+            onCenterChanged: onCenterChanged,
+            onBranchChanged: onBranchChanged,
+            onEnvelopeChanged: onEnvelopeChanged,
+          ),
           if (categories.isNotEmpty) ...[
             const SizedBox(height: AppDimensions.spacing16),
             DropdownButtonFormField<String>(
@@ -575,6 +688,157 @@ class _FiltersCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// فلاتر المركز والفرع والظرف المالي (مع خيار «الكل»): الأسماء تُقرأ من
+/// centers / branches / fundEnvelopes، وقائمة الفروع تُحصر بالمركز المختار.
+class _ScopeFilters extends StatelessWidget {
+  const _ScopeFilters({
+    required this.center,
+    required this.branch,
+    required this.envelope,
+    required this.onCenterChanged,
+    required this.onBranchChanged,
+    required this.onEnvelopeChanged,
+  });
+
+  final String center;
+  final String branch;
+  final String envelope;
+  final ValueChanged<String> onCenterChanged;
+  final ValueChanged<String> onBranchChanged;
+  final ValueChanged<String> onEnvelopeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection(AppCollections.centers)
+          .snapshots(),
+      builder: (context, centersSnap) {
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection(AppCollections.branches)
+              .snapshots(),
+          builder: (context, branchesSnap) {
+            final centers = (centersSnap.data?.docs ?? const [])
+                .map(CenterModel.fromSnapshot)
+                .toList()
+              ..sort((a, b) => a.name.compareTo(b.name));
+            final branches = (branchesSnap.data?.docs ?? const [])
+                .map(BranchModel.fromSnapshot)
+                .where((item) => center == _Filter.all || item.centerId == center)
+                .toList()
+              ..sort((a, b) => a.name.compareTo(b.name));
+
+            final centerValue =
+                center == _Filter.all || centers.any((c) => c.id == center)
+                    ? center
+                    : _Filter.all;
+            final branchValue =
+                branch == _Filter.all || branches.any((b) => b.id == branch)
+                    ? branch
+                    : _Filter.all;
+
+            final centerField = DropdownButtonFormField<String>(
+              key: ValueKey('center-$centerValue'),
+              initialValue: centerValue,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'المركز',
+                prefixIcon: Icon(Icons.account_balance_outlined),
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: _Filter.all,
+                  child: Text('الكل'),
+                ),
+                for (final item in centers)
+                  DropdownMenuItem(
+                    value: item.id,
+                    child: Text(item.name, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (next) {
+                if (next != null) onCenterChanged(next);
+              },
+            );
+
+            final branchField = DropdownButtonFormField<String>(
+              key: ValueKey('branch-$centerValue-$branchValue'),
+              initialValue: branchValue,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'الفرع',
+                prefixIcon: Icon(Icons.store_mall_directory_outlined),
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: _Filter.all,
+                  child: Text('الكل'),
+                ),
+                for (final item in branches)
+                  DropdownMenuItem(
+                    value: item.id,
+                    child: Text(item.name, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (next) {
+                if (next != null) onBranchChanged(next);
+              },
+            );
+
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection(AppCollections.fundEnvelopes)
+                  .snapshots(),
+              builder: (context, envelopesSnap) {
+                final envelopes = (envelopesSnap.data?.docs ?? const [])
+                    .map(EnvelopeModel.fromSnapshot)
+                    .toList()
+                  ..sort((a, b) => a.name.compareTo(b.name));
+                final envelopeValue = envelope == _Filter.all ||
+                        envelopes.any((e) => e.id == envelope)
+                    ? envelope
+                    : _Filter.all;
+
+                final envelopeField = DropdownButtonFormField<String>(
+                  key: ValueKey('envelope-filter-$envelopeValue'),
+                  initialValue: envelopeValue,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'الظرف المالي',
+                    prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: _Filter.all,
+                      child: Text('الكل'),
+                    ),
+                    for (final item in envelopes)
+                      DropdownMenuItem(
+                        value: item.id,
+                        child:
+                            Text(item.name, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: (next) {
+                    if (next != null) onEnvelopeChanged(next);
+                  },
+                );
+
+                return AppResponsiveGrid(
+                  minItemWidth: 220,
+                  maxColumns: 3,
+                  children: [centerField, branchField, envelopeField],
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -625,13 +889,13 @@ class _DaySection extends StatelessWidget {
   const _DaySection({
     required this.group,
     required this.canCancel,
-    required this.cancelling,
+    required this.cancellingId,
     required this.onCancel,
   });
 
   final _DayGroup group;
   final bool canCancel;
-  final bool cancelling;
+  final String? cancellingId;
   final ValueChanged<TransactionModel> onCancel;
 
   @override
@@ -679,7 +943,8 @@ class _DaySection extends StatelessWidget {
                     _TransactionTile(
                       transaction: group.items[i],
                       canCancel: canCancel,
-                      cancelling: cancelling,
+                      cancelling: cancellingId == group.items[i].id,
+                      busy: cancellingId != null,
                       onCancel: () => onCancel(group.items[i]),
                     ),
                     if (i != group.items.length - 1)
@@ -703,12 +968,18 @@ class _TransactionTile extends StatefulWidget {
     required this.transaction,
     required this.canCancel,
     required this.cancelling,
+    required this.busy,
     required this.onCancel,
   });
 
   final TransactionModel transaction;
   final bool canCancel;
+
+  /// هذه البطاقة هي التي يجري إلغاؤها الآن (يظهر مؤشر التحميل فيها فقط).
   final bool cancelling;
+
+  /// هناك إلغاء جارٍ في بطاقة ما: تُعطَّل قوائم البقية دون مؤشر.
+  final bool busy;
   final VoidCallback onCancel;
 
   @override
@@ -804,6 +1075,7 @@ class _TransactionTileState extends State<_TransactionTile> {
                           ),
                         )
                       : PopupMenuButton<String>(
+                          enabled: !widget.busy,
                           tooltip: 'خيارات',
                           icon: const Icon(Icons.more_vert_rounded),
                           onSelected: (_) => widget.onCancel(),
@@ -957,6 +1229,8 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
   String _type = AppTransactionTypes.income;
   String? _category;
   String? _envelopeId;
+  String _centerId = _Filter.all;
+  String _branchId = _Filter.all;
   String _paymentMethod = AppPaymentMethods.cash;
   bool _saving = false;
 
@@ -968,9 +1242,31 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     super.dispose();
   }
 
-  List<String> get _categories => _type == AppTransactionTypes.income
-      ? AppIncomeCategories.creatable
-      : AppExpenseCategories.creatable;
+  static EnvelopeModel? _envelopeById(List<EnvelopeModel> envelopes, String? id) {
+    for (final item in envelopes) {
+      if (item.id == id) return item;
+    }
+    return null;
+  }
+
+  /// الظرف المخصص يحصر المصروفات في بنود الصرف المسموحة له فقط
+  /// (الإيرادات غير مقيدة، وسلف الموظفين تُنشأ آليًا فلا تُعرض يدويًا).
+  bool _isRestrictedExpense(EnvelopeModel? envelope) =>
+      envelope != null &&
+      envelope.fundType == AppFundTypes.restricted &&
+      _type == AppTransactionTypes.expense;
+
+  List<String> _categoriesFor(EnvelopeModel? envelope) {
+    if (_type == AppTransactionTypes.income) {
+      return AppIncomeCategories.creatable;
+    }
+    if (_isRestrictedExpense(envelope)) {
+      return envelope!.allowedExpenseCategories
+          .where((item) => item != AppExpenseCategories.employeeLoan)
+          .toList();
+    }
+    return AppExpenseCategories.creatable;
+  }
 
   Future<void> _save(List<EnvelopeModel> envelopes) async {
     if (!_formKey.currentState!.validate()) return;
@@ -1002,6 +1298,11 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
         AppFunctions.createTransaction,
         {
           'envelopeId': envelope.id,
+          // «الكل» = بلا اختيار: يبقى مركز الظرف ويُترك الفرع فارغًا.
+          'centerId': _centerId == _Filter.all ? null : _centerId,
+          'branchId': _centerId == _Filter.all || _branchId == _Filter.all
+              ? null
+              : _branchId,
           'type': _type,
           'category': _category,
           'name': _nameController.text.trim(),
@@ -1055,6 +1356,9 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
               if (envelopes.isEmpty) {
                 return const Text('أنشئ ظرفًا ماليًا نشطًا أولًا لإضافة حركة.');
               }
+              final selectedEnvelope = _envelopeById(envelopes, _envelopeId);
+              final categories = _categoriesFor(selectedEnvelope);
+              final restrictedExpense = _isRestrictedExpense(selectedEnvelope);
               return SingleChildScrollView(
                 child: Form(
                   key: _formKey,
@@ -1098,17 +1402,42 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
                       validator: (value) => value == null ? 'اختر الظرف' : null,
                       onChanged: _saving
                           ? null
-                          : (value) => setState(() => _envelopeId = value),
+                          : (value) => setState(() {
+                                _envelopeId = value;
+                                final allowed = _categoriesFor(
+                                    _envelopeById(envelopes, value));
+                                if (_category != null &&
+                                    !allowed.contains(_category)) {
+                                  _category = null;
+                                }
+                              }),
+                    ),
+                    const SizedBox(height: AppDimensions.spacing12),
+                    _CenterBranchFormFields(
+                      center: _centerId,
+                      branch: _branchId,
+                      enabled: !_saving,
+                      onCenterChanged: (value) => setState(() {
+                        _centerId = value;
+                        _branchId = _Filter.all;
+                      }),
+                      onBranchChanged: (value) =>
+                          setState(() => _branchId = value),
                     ),
                     const SizedBox(height: AppDimensions.spacing12),
                     DropdownButtonFormField<String>(
-                      key: ValueKey('category-$_type-$_category'),
+                      key: ValueKey('category-$_type-$_envelopeId-$_category'),
                       initialValue: _category,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'التصنيف',
-                        border: OutlineInputBorder(),
+                        helperText: !restrictedExpense
+                            ? null
+                            : categories.isEmpty
+                                ? 'لا توجد بنود صرف مسموحة لهذا الظرف'
+                                : 'الظرف مخصص: تظهر بنود الصرف المسموحة له فقط',
+                        border: const OutlineInputBorder(),
                       ),
-                      items: _categories
+                      items: categories
                           .map((item) => DropdownMenuItem(
                                 value: item,
                                 child: Text(_categoryLabel(item)),
@@ -1221,6 +1550,121 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
           ),
         ],
       );
+}
+
+/// حقلا المركز والفرع في نموذج إضافة حركة (خيار «الكل» = بلا تحديد).
+/// الفرع يُفعَّل بعد اختيار مركز، وقائمته محصورة بفروع ذلك المركز.
+class _CenterBranchFormFields extends StatelessWidget {
+  const _CenterBranchFormFields({
+    required this.center,
+    required this.branch,
+    required this.enabled,
+    required this.onCenterChanged,
+    required this.onBranchChanged,
+  });
+
+  final String center;
+  final String branch;
+  final bool enabled;
+  final ValueChanged<String> onCenterChanged;
+  final ValueChanged<String> onBranchChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection(AppCollections.centers)
+          .snapshots(),
+      builder: (context, centersSnap) {
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection(AppCollections.branches)
+              .snapshots(),
+          builder: (context, branchesSnap) {
+            final centers = (centersSnap.data?.docs ?? const [])
+                .map(CenterModel.fromSnapshot)
+                .toList()
+              ..sort((a, b) => a.name.compareTo(b.name));
+            final branches = (branchesSnap.data?.docs ?? const [])
+                .map(BranchModel.fromSnapshot)
+                .where((item) => item.centerId == center)
+                .toList()
+              ..sort((a, b) => a.name.compareTo(b.name));
+
+            final centerValue =
+                center == _Filter.all || centers.any((c) => c.id == center)
+                    ? center
+                    : _Filter.all;
+            final branchValue =
+                branch == _Filter.all || branches.any((b) => b.id == branch)
+                    ? branch
+                    : _Filter.all;
+            final hasCenter = centerValue != _Filter.all;
+
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  key: ValueKey('form-center-$centerValue'),
+                  initialValue: centerValue,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'المركز',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: _Filter.all,
+                      child: Text('الكل'),
+                    ),
+                    for (final item in centers)
+                      DropdownMenuItem(
+                        value: item.id,
+                        child:
+                            Text(item.name, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: enabled
+                      ? (next) {
+                          if (next != null) onCenterChanged(next);
+                        }
+                      : null,
+                ),
+                const SizedBox(height: AppDimensions.spacing12),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('form-branch-$centerValue-$branchValue'),
+                  initialValue: branchValue,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'الفرع',
+                    helperText: hasCenter ? null : 'اختر مركزًا لعرض فروعه',
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: _Filter.all,
+                      child: Text('الكل'),
+                    ),
+                    for (final item in branches)
+                      DropdownMenuItem(
+                        value: item.id,
+                        child:
+                            Text(item.name, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: enabled && hasCenter
+                      ? (next) {
+                          if (next != null) onBranchChanged(next);
+                        }
+                      : null,
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
 }
 
 abstract class _Filter {
