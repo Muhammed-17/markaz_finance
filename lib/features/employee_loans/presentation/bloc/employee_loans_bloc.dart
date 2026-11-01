@@ -128,7 +128,7 @@ class EmployeeLoansBloc extends Bloc<EmployeeLoansEvent, EmployeeLoansState> {
 
     // معرّف طلب فريد لكل عملية سداد — منع التكرار يتحقق نهائيًا على الخادم
     // داخل المعاملة الذرية (حماية إضافية من إعادة الإرسال عند انقطاع الشبكة).
-    final requestId = const Uuid().v4();
+    final requestId = event.requestId ?? const Uuid().v4();
 
     final result = await _repayLoan(RepayLoanParams(
       loanId: event.loanId,

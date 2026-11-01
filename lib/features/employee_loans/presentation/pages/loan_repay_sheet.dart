@@ -12,6 +12,7 @@ import '../../../../core/data/models/pending_operation_model.dart';
 import '../../../../core/domain/entities/employee_loan_entity.dart';
 import '../../../../core/domain/entities/envelope_entity.dart';
 import '../../../../core/network/connectivity_service.dart';
+import '../../../../core/services/pending_operation_handlers.dart';
 import '../../../../core/services/pending_operations_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
@@ -24,6 +25,7 @@ import '../../../../core/widgets/app_loading.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../app/di/injection.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../core/errors/failures.dart';
 import '../../domain/repositories/employee_loans_repository.dart';
 import '../bloc/employee_loans_bloc.dart';
 
@@ -32,15 +34,25 @@ import '../bloc/employee_loans_bloc.dart';
 /// عند توفر الإنترنت: تسجيل فوري عبر المعاملة الذرية.
 /// عند انقطاع الإنترنت: حفظ كمسودة معلقة (Offline Draft) تُرسل تلقائيًا عند عودة الاتصال.
 class LoanRepaySheet extends StatefulWidget {
-  const LoanRepaySheet({required this.loan, super.key});
+  const LoanRepaySheet({required this.loan, this.draft, super.key});
 
   final EmployeeLoanEntity loan;
+
+  /// مسودة مرفوضة يُعاد تعديلها وإرسالها: تُعبَّأ القيم منها، وتُحذف عند نجاح
+  /// البديلة (بمعرّف طلب جديد لأن الخادم لم يعتمد القديمة).
+  final PendingOperationModel? draft;
 
   @override
   State<LoanRepaySheet> createState() => _LoanRepaySheetState();
 }
 
 class _LoanRepaySheetState extends State<LoanRepaySheet> {
+  /// يُولَّد مرة واحدة لنافذة السداد ويُستخدم في المحاولة المباشرة والمسودة معًا،
+  /// فإن انتهت المهلة بعد التزام ناجح على الخادم لا يتكرر السداد عند المزامنة.
+  final String _requestId = const Uuid().v4();
+  bool _handlingTransient = false;
+  String? _draftEnvelopeId;
+
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
@@ -60,6 +72,13 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
         sl<ConnectivityService>().onConnectivityChanged.listen((online) {
       if (mounted) setState(() => _isOnline = online);
     });
+    final draft = widget.draft;
+    if (draft != null) {
+      final amount = draft.payload['amount'];
+      if (amount is num) _amountController.text = amount.toString();
+      _notesController.text = (draft.payload['notes'] as String?) ?? '';
+      _draftEnvelopeId = draft.payload['envelopeId'] as String?;
+    }
     _loadEnvelopes();
   }
 
@@ -86,6 +105,12 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
       (envelopes) => setState(() {
         _isLoadingEnvelopes = false;
         _envelopes = envelopes;
+        // تعديل مسودة: نختار ظرفها السابق إن كان ما زال نشطًا (وإلا يختار المستخدم).
+        if (_envelopeId == null &&
+            _draftEnvelopeId != null &&
+            envelopes.any((e) => e.id == _draftEnvelopeId)) {
+          _envelopeId = _draftEnvelopeId;
+        }
       }),
     );
   }
@@ -97,6 +122,8 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
     final amount =
         double.tryParse(_amountController.text.trim().replaceAll(',', ''));
     if (amount == null || amount <= 0) return;
+
+    if (!await _confirmDespitePending(amount) || !mounted) return;
 
     // في وضع عدم الاتصال: حفظ كمسودة معلقة في Hive
     if (!_isOnline) {
@@ -112,38 +139,7 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
       );
       if (!confirmed || !mounted) return;
 
-      // id يُولَّد مرة واحدة هنا ويُستخدم كـ requestId لمنع التكرار على الخادم.
-      // إنشاؤه عند الحفظ (لا عند التنفيذ) يضمن نفس المعرّف في كل محاولة إعادة إرسال.
-      final requestId = const Uuid().v4();
-      final ownerUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-      final notes = _notesController.text.trim().isEmpty
-          ? null
-          : _notesController.text.trim();
-
-      final pendingOp = PendingOperationModel(
-        id: requestId, // id === requestId: معرّف واحد لمنع التكرار
-        ownerUid: ownerUid,
-        type: AppFunctions.repayLoan,
-        title:
-            'سداد سلفة: ${widget.loan.employeeName} (${AppFormatters.amount(amount)})',
-        payload: <String, dynamic>{
-          'loanId': widget.loan.id,
-          'amount': amount,
-          'envelopeId': _envelopeId!,
-          'requestId': requestId,
-          'notes': notes,
-        },
-        createdAt: DateTime.now(),
-      );
-
-      await sl<PendingOperationsService>().saveOperation(pendingOp);
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        message:
-            'تم حفظ العملية كمسودة معلقة — ستتم المزامنة تلقائيًا فور توفر الإنترنت',
-      );
-      Navigator.of(context).pop();
+      await _saveDraft(amount);
       return;
     }
 
@@ -162,14 +158,128 @@ class _LoanRepaySheetState extends State<LoanRepaySheet> {
           loanId: widget.loan.id,
           amount: amount,
           envelopeId: _envelopeId!,
+          requestId: _requestId,
           notes: _notesController.text.trim().isEmpty
               ? null
               : _notesController.text.trim(),
         ));
   }
 
+  /// حذف المسودة المرفوضة التي يحلّ هذا السداد محلها (عند نجاح البديل فقط).
+  void _discardReplacedDraft() {
+    final id = widget.draft?.id;
+    if (id != null) sl<PendingOperationsService>().deleteOperation(id);
+  }
+
+  /// تنبيه قبل تسجيل سداد جديد لسلفة لها سداد معلّق: قد يكون تكرارًا، وقد يتجاوز
+  /// مجموعهما المتبقي فيُرفض الثاني عند المزامنة.
+  Future<bool> _confirmDespitePending(double amount) async {
+    final pending = sl<PendingOperationsService>()
+        .activeRepaymentsForLoan(widget.loan.id, excludeId: widget.draft?.id);
+    if (pending.isEmpty) return true;
+
+    final total = PendingOperationsService.sumAmount(pending);
+    final exceeds = Money.fromUnits(total + amount) >
+        Money.fromUnits(widget.loan.remainingBalance);
+    final message = 'لهذه السلفة ${pending.length} سداد معلّق بمجموع '
+        '${AppFormatters.amount(total)} لم يُعتمد بعد. '
+        '${exceeds ? 'مجموعه مع هذا المبلغ يتجاوز المتبقي، فسيُرفض أحدهما عند المزامنة. ' : 'قد يكون هذا السداد مكررًا. '}'
+        'هل تريد المتابعة؟';
+    return showAppConfirmDialog(
+      context,
+      title: 'يوجد سداد معلّق لهذه السلفة',
+      message: message,
+      confirmLabel: 'متابعة',
+      useRootNavigator: true,
+    );
+  }
+
+  /// حفظ السداد كمسودة معلقة في Hive بنفس requestId الخاص بالنافذة.
+  Future<void> _saveDraft(double amount) async {
+    final ownerUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final notes = _notesController.text.trim().isEmpty
+        ? null
+        : _notesController.text.trim();
+
+    final pendingOp = PendingOperationModel(
+      id: _requestId, // id === requestId: معرّف واحد لمنع التكرار
+      ownerUid: ownerUid,
+      type: AppFunctions.repayLoan,
+      title:
+          'سداد سلفة: ${widget.loan.employeeName} (${AppFormatters.amount(amount)})',
+      payload: <String, dynamic>{
+        'loanId': widget.loan.id,
+        'amount': amount,
+        'envelopeId': _envelopeId!,
+        'requestId': _requestId,
+        'notes': notes,
+      },
+      createdAt: DateTime.now(),
+      schemaVersion: RepayLoanHandler.schemaVersion,
+    );
+
+    await sl<PendingOperationsService>().saveOperation(pendingOp);
+    _discardReplacedDraft();
+    if (!mounted) return;
+    showAppSnackBar(
+      context,
+      message:
+          'تم حفظ العملية كمسودة معلقة — ستتم المزامنة تلقائيًا فور توفر الإنترنت',
+    );
+    Navigator.of(context).pop();
+  }
+
+  /// فشل مباشر بسبب الشبكة/المهلة: قد يكون الخادم نفّذ الطلب فعلًا وضاع الرد،
+  /// فنعرض حفظه كمسودة بنفس requestId بدل إعادة المحاولة بمعرّف جديد.
+  Future<void> _offerDraftAfterTransientFailure() async {
+    if (_handlingTransient || !mounted) return;
+    final amount =
+        double.tryParse(_amountController.text.trim().replaceAll(',', ''));
+    if (amount == null || amount <= 0 || _envelopeId == null) return;
+    _handlingTransient = true;
+    try {
+      final confirmed = await showAppConfirmDialog(
+        context,
+        title: 'تعذّر الوصول إلى الخادم',
+        message: 'لم يصلنا رد من الخادم، وقد يكون السداد سُجّل فعلًا. لتفادي '
+            'تسجيله مرتين، سيُحفظ كمسودة معلقة بالمعرّف نفسه وتتم مزامنته '
+            'تلقائيًا (ولن يتكرر). هل تريد المتابعة؟',
+        confirmLabel: 'حفظ كمسودة',
+        useRootNavigator: true,
+      );
+      if (!confirmed || !mounted) return;
+      await _saveDraft(amount);
+    } finally {
+      _handlingTransient = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<EmployeeLoansBloc, EmployeeLoansState>(
+          listenWhen: (previous, state) =>
+              previous.isSubmitting &&
+              state.status == EmployeeLoansStatus.operationFailure &&
+              state.lastOperation == EmployeeLoansOperation.repay &&
+              state.failure != null &&
+              PendingOperationsService.isTransientFailureModel(state.failure!),
+          listener: (context, state) => _offerDraftAfterTransientFailure(),
+        ),
+        BlocListener<EmployeeLoansBloc, EmployeeLoansState>(
+          listenWhen: (previous, state) =>
+              previous.isSubmitting &&
+              state.status == EmployeeLoansStatus.operationCompleted &&
+              state.lastOperation == EmployeeLoansOperation.repay,
+          listener: (context, state) => _discardReplacedDraft(),
+        ),
+      ],
+      child: _buildForm(context),
+    );
+  }
+
+  Widget _buildForm(BuildContext context) {
     return BlocBuilder<EmployeeLoansBloc, EmployeeLoansState>(
       builder: (context, state) {
         final isSubmitting = state.isSubmitting;

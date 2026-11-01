@@ -50,7 +50,46 @@ class HiveService {
     await _ensureBox(c.AppCollections.cacheCategoriesBox);
     // الطابور يحتوي على مبالغ ومعرفات مالية — يُفتح بمشفّر AES-256
     final cipher = await _encryption.getOrCreateCipher();
-    await _ensureBox(c.AppCollections.pendingOperationsBox, encryptionCipher: cipher);
+    await _openEncryptedPendingBox(cipher);
+  }
+
+  /// يفتح صندوق الطابور المشفَّر ويهاجر إليه محتوى الصندوق القديم (غير المشفَّر).
+  ///
+  /// - اسم صندوق جديد منفصل: لا نفتح ملفًا غير مشفَّر بمفتاح (Hive كان سيعتبره
+  ///   تالفًا ويتجاهل محتواه بصمت).
+  /// - الهجرة آمنة ضد الانقطاع: يُكتب كل شيء في الجديد أولًا ثم يُحذف القديم،
+  ///   وإن توقفت العملية في المنتصف تُعاد من جديد عند الإقلاع التالي (put بنفس id).
+  /// - إن تعذّر فتح المشفَّر (مفتاح مفقود/ملف تالف) يُعاد إنشاؤه فارغًا بدل أن
+  ///   يتعطل التطبيق عند الإقلاع.
+  Future<void> _openEncryptedPendingBox(HiveCipher cipher) async {
+    final name = c.AppCollections.pendingOperationsBox;
+    final legacy = c.AppCollections.legacyPendingOperationsBox;
+
+    Box<dynamic> box;
+    try {
+      box = await _ensureBox(name, encryptionCipher: cipher);
+    } catch (e) {
+      debugPrint('HiveService: encrypted pending box unreadable, recreating: $e');
+      try {
+        await Hive.deleteBoxFromDisk(name);
+      } catch (_) {}
+      box = await _ensureBox(name, encryptionCipher: cipher);
+    }
+
+    try {
+      if (await Hive.boxExists(legacy)) {
+        final old = await Hive.openBox<dynamic>(legacy);
+        for (final key in old.keys) {
+          final value = old.get(key);
+          if (value != null) await box.put(key, value);
+        }
+        await old.close();
+        await Hive.deleteBoxFromDisk(legacy);
+      }
+    } catch (e) {
+      // فشل الهجرة لا يوقف الإقلاع؛ تُعاد المحاولة في التشغيل التالي.
+      debugPrint('HiveService: legacy pending box migration failed: $e');
+    }
   }
 
   Future<Box<dynamic>> _ensureBox(

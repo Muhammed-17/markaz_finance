@@ -26,7 +26,11 @@ class PendingOperationModel extends Equatable {
     required this.createdAt,
     this.status = PendingOperationStatus.pending,
     this.failureReason,
+    this.schemaVersion = legacySchemaVersion,
   });
+
+  /// مسودات حُفظت قبل إضافة الحقل تُعامل كإصدار 1.
+  static const int legacySchemaVersion = 1;
 
   /// معرف محلي فريد للعملية (= requestId المُرسَل للخادم لمنع التكرار)
   final String id;
@@ -52,6 +56,9 @@ class PendingOperationModel extends Equatable {
   /// سبب الفشل أو الرفض من الخادم إن وُجد
   final String? failureReason;
 
+  /// إصدار بنية الـ payload وقت الحفظ — يقرر المعالج هل ما زال مدعومًا.
+  final int schemaVersion;
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'ownerUid': ownerUid,
@@ -61,6 +68,7 @@ class PendingOperationModel extends Equatable {
         'createdAt': createdAt.millisecondsSinceEpoch,
         'status': status.name,
         'failureReason': failureReason,
+        'schemaVersion': schemaVersion,
       };
 
   factory PendingOperationModel.fromMap(Map<String, dynamic> map) {
@@ -76,6 +84,8 @@ class PendingOperationModel extends Equatable {
         orElse: () => PendingOperationStatus.pending,
       ),
       failureReason: map['failureReason'] as String?,
+      schemaVersion:
+          map['schemaVersion'] as int? ?? PendingOperationModel.legacySchemaVersion,
     );
   }
 
@@ -94,10 +104,11 @@ class PendingOperationModel extends Equatable {
       status: status ?? this.status,
       failureReason:
           clearFailureReason ? null : (failureReason ?? this.failureReason),
+      schemaVersion: schemaVersion,
     );
   }
 
   @override
   List<Object?> get props =>
-      [id, ownerUid, type, title, payload, createdAt, status, failureReason];
+      [id, ownerUid, type, title, payload, createdAt, status, failureReason, schemaVersion];
 }

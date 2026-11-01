@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/di/injection.dart';
+import '../../app/router/route_guards.dart';
 import '../constants/app_colors.dart';
+import '../constants/app_constants.dart';
 import '../constants/app_dimensions.dart';
 import '../data/models/pending_operation_model.dart';
 import '../services/pending_operations_service.dart';
@@ -19,7 +22,7 @@ class PendingOperationsBanner extends StatelessWidget {
 
     return StreamBuilder<List<PendingOperationModel>>(
       stream: service.operationsStream,
-      initialData: service.allOperations,
+      initialData: service.ownOperations,
       builder: (context, snapshot) {
         final operations = snapshot.data ?? const [];
         if (operations.isEmpty) return const SizedBox.shrink();
@@ -120,7 +123,7 @@ class _PendingOperationsSheet extends StatelessWidget {
 
     return StreamBuilder<List<PendingOperationModel>>(
       stream: service.operationsStream,
-      initialData: service.allOperations,
+      initialData: service.ownOperations,
       builder: (context, snapshot) {
         final operations = snapshot.data ?? const [];
 
@@ -185,7 +188,9 @@ class _PendingOperationsSheet extends StatelessWidget {
                         : 'مزامنة كل العمليات المعلقة الآن',
                     icon: Icons.sync_rounded,
                     isLoading: service.isSyncing,
-                    onPressed: service.isSyncing ? null : () => service.syncAll(),
+                    onPressed: service.isSyncing
+                        ? null
+                        : () => service.syncAll(includeFailed: true),
                   ),
                 ],
               ],
@@ -263,6 +268,23 @@ class _OperationTile extends StatelessWidget {
             'وقت الحفظ: ${AppFormatters.date(operation.createdAt)}',
             style: AppTypography.labelSmall.copyWith(color: AppColors.textSecondary),
           ),
+          if (operation.status == PendingOperationStatus.failed &&
+              operation.type == AppFunctions.repayLoan &&
+              operation.payload['loanId'] is String) ...[
+            const SizedBox(height: AppDimensions.spacing4),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton(
+                onPressed: () {
+                  final router = GoRouter.of(context);
+                  final loanId = operation.payload['loanId'] as String;
+                  Navigator.of(context).pop();
+                  router.push('${RoutePaths.loans}/$loanId');
+                },
+                child: const Text('فتح السلفة للتعديل وإعادة الإرسال'),
+              ),
+            ),
+          ],
           if (operation.failureReason != null) ...[
             const SizedBox(height: AppDimensions.spacing8),
             Container(

@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/domain/entities/envelope_entity.dart';
+import '../../../../core/domain/entities/user_entity.dart';
+import '../../../../core/errors/failures.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/utils/validators.dart';
@@ -14,6 +17,7 @@ import '../../../../core/widgets/app_loading.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../app/di/injection.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../users/domain/usecases/users_usecases.dart';
 import '../../domain/entities/loan_form_params.dart';
 import '../../domain/repositories/employee_loans_repository.dart';
 import '../bloc/employee_loans_bloc.dart';
@@ -31,29 +35,71 @@ class LoanFormSheet extends StatefulWidget {
 
 class _LoanFormSheetState extends State<LoanFormSheet> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  final TextEditingController _employeeNameController = TextEditingController();
-  final TextEditingController _employeeIdController = TextEditingController();
   final TextEditingController _totalAmountController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
+
+  // الموظف يُختار من حسابات النظام النشطة (مستخدم أو مدير).
+  List<UserProfileEntity> _users = const [];
+  bool _isLoadingUsers = true;
+  String? _usersFailure;
+  String? _selectedUserId;
 
   List<EnvelopeEntity> _envelopes = const [];
   bool _isLoadingEnvelopes = true;
   String? _envelopesFailure;
   String? _envelopeId;
+  // عدد الأظرف المخصصة المستبعدة لأنها لا تشمل بند «سلف الموظفين».
+  int _hiddenEnvelopes = 0;
 
   @override
   void initState() {
     super.initState();
+    _loadUsers();
     _loadEnvelopes();
   }
 
   @override
   void dispose() {
-    _employeeNameController.dispose();
-    _employeeIdController.dispose();
     _totalAmountController.dispose();
     _notesController.dispose();
     super.dispose();
+  }
+
+  /// قراءة حسابات المستخدمين النشطة (مستخدم عادي أو مدير نظام) لقائمة الموظفين.
+  ///
+  /// قواعد Firestore تسمح بقراءة قائمة المستخدمين للمدير ولصاحب صلاحية approve
+  /// فقط؛ لغيرهما تظهر رسالة الخطأ هنا مع زر إعادة المحاولة.
+  Future<void> _loadUsers() async {
+    setState(() {
+      _isLoadingUsers = true;
+      _usersFailure = null;
+    });
+    try {
+      final users = await sl<WatchUsers>()()
+          .first
+          .timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      final active = users.where((u) => u.isActive).toList();
+      setState(() {
+        _isLoadingUsers = false;
+        _users = active;
+        if (!active.any((u) => u.id == _selectedUserId)) _selectedUserId = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingUsers = false;
+        _usersFailure =
+            e is Failure ? e.message : 'تعذّر تحميل قائمة الحسابات';
+      });
+    }
+  }
+
+  UserProfileEntity? get _selectedUser {
+    for (final u in _users) {
+      if (u.id == _selectedUserId) return u;
+    }
+    return null;
   }
 
   /// قراءة الأظرف النشطة مباشرة عبر المستودع (fetchActiveEnvelopesForLoan)
@@ -72,7 +118,13 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
       }),
       (envelopes) => setState(() {
         _isLoadingEnvelopes = false;
-        _envelopes = envelopes;
+        // الظرف العام يصلح دائمًا، والمخصص فقط إن كان بند employee_loan ضمن
+        // تصنيفاته المسموحة (وإلا ترفض القواعد صرف السلفة منه).
+        final eligible = envelopes
+            .where((e) => e.allowsExpenseCategory(AppExpenseCategories.employeeLoan))
+            .toList();
+        _hiddenEnvelopes = envelopes.length - eligible.length;
+        _envelopes = eligible;
         _envelopeId = null;
       }),
     );
@@ -80,13 +132,14 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    if (_envelopeId == null) return;
+    final employee = _selectedUser;
+    if (_envelopeId == null || employee == null) return;
 
     final confirmed = await showAppConfirmDialog(
       context,
       title: AppStrings.confirmAction,
       message: 'سيتم صرف سلفة بمبلغ ${_totalAmountController.text.trim()} ج.م '
-          'للموظف "${_employeeNameController.text.trim()}" وخصم المبلغ من '
+          'للموظف "${employee.name}" وخصم المبلغ من '
           'رصيد الظرف المختار. هل تريد المتابعة؟',
       confirmLabel: 'صرف السلفة',
     );
@@ -94,10 +147,7 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
 
     context.read<EmployeeLoansBloc>().add(EmployeeLoansCreateRequested(
           CreateLoanParams(
-            employeeName: _employeeNameController.text.trim(),
-            employeeId: _employeeIdController.text.trim().isEmpty
-                ? null
-                : _employeeIdController.text.trim(),
+            employeeName: employee.name,
             totalAmount:
                 double.tryParse(_totalAmountController.text.trim()) ?? 0,
             envelopeId: _envelopeId!,
@@ -146,23 +196,33 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
                   ),
                   const SizedBox(height: AppDimensions.sectionSpacing),
 
-                  AppTextField(
-                    label: 'اسم الموظف *',
-                    controller: _employeeNameController,
-                    hintText: 'الاسم الكامل للموظف',
-                    maxLength: 200,
-                    enabled: !isSubmitting,
-                    validator: (v) =>
-                        AppValidators.name(v, fieldName: 'اسم الموظف'),
-                  ),
-                  const SizedBox(height: AppDimensions.itemSpacing),
-                  AppTextField(
-                    label: 'معرف الموظف',
-                    controller: _employeeIdController,
-                    hintText: 'رقم وظيفي أو معرف داخلي (اختياري)',
-                    maxLength: 128,
-                    enabled: !isSubmitting,
-                  ),
+                  if (_isLoadingUsers)
+                    const AppLoadingView(message: 'جارٍ تحميل الحسابات...')
+                  else if (_usersFailure != null)
+                    AppErrorView(
+                      message: _usersFailure!,
+                      isCompact: true,
+                      onRetry: _loadUsers,
+                    )
+                  else
+                    AppDropdownField<String>(
+                      label: 'اسم الموظف *',
+                      items: _users
+                          .map((u) => DropdownMenuItem<String>(
+                                value: u.id,
+                                child: Text(
+                                  u.isAdmin ? '${u.name} — مدير نظام' : u.name,
+                                ),
+                              ))
+                          .toList(),
+                      value: _selectedUserId,
+                      hint: _users.isEmpty
+                          ? 'لا توجد حسابات نشطة'
+                          : 'اختر الموظف من حسابات المستخدمين',
+                      enabled: !isSubmitting && _users.isNotEmpty,
+                      validator: (v) => v == null ? 'اسم الموظف مطلوب' : null,
+                      onChanged: (v) => setState(() => _selectedUserId = v),
+                    ),
                   const SizedBox(height: AppDimensions.itemSpacing),
                   AppTextField(
                     label: 'إجمالي السلفة (ج.م) *',
@@ -199,12 +259,23 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
                           .toList(),
                       value: _envelopeId,
                       hint: _envelopes.isEmpty
-                          ? 'لا توجد أظرف نشطة'
+                          ? (_hiddenEnvelopes > 0
+                              ? 'لا يوجد ظرف يسمح بصرف السلف'
+                              : 'لا توجد أظرف نشطة')
                           : 'اختر الظرف الذي سيُصرف منه المبلغ',
                       enabled: !isSubmitting && _envelopes.isNotEmpty,
                       validator: (v) => v == null ? 'ظرف الصرف مطلوب' : null,
                       onChanged: (v) => setState(() => _envelopeId = v),
                     ),
+                  if (!_isLoadingEnvelopes &&
+                      _envelopesFailure == null &&
+                      _hiddenEnvelopes > 0) ...[
+                    const SizedBox(height: AppDimensions.spacing8),
+                    const Text(
+                      'تُعرض الأظرف العامة والمخصصة التي تتضمن بند «سلف الموظفين» فقط.',
+                      style: AppTypography.labelSmall,
+                    ),
+                  ],
                   const SizedBox(height: AppDimensions.itemSpacing),
 
                   AppTextField(
@@ -248,8 +319,11 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
 
                   AppButton(
                     label: 'صرف السلفة',
-                    onPressed:
-                        (_envelopeId == null || isSubmitting) ? null : _submit,
+                    onPressed: (_envelopeId == null ||
+                            _selectedUserId == null ||
+                            isSubmitting)
+                        ? null
+                        : _submit,
                     isLoading: isSubmitting,
                     icon: Icons.check_rounded,
                   ),

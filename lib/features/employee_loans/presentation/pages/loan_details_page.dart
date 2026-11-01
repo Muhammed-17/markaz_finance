@@ -8,7 +8,9 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/domain/entities/audit_log_entities.dart';
 import '../../../../core/domain/entities/employee_loan_entity.dart';
+import '../../../../core/data/models/pending_operation_model.dart';
 import '../../../../core/domain/entities/user_entity.dart';
+import '../../../../core/services/pending_operations_service.dart';
 import '../../../../core/services/permission_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
@@ -118,7 +120,10 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
     );
   }
 
-  Future<void> _openRepaySheet(EmployeeLoanEntity loan) async {
+  Future<void> _openRepaySheet(
+    EmployeeLoanEntity loan, {
+    PendingOperationModel? draft,
+  }) async {
     setState(() => _isSheetOpen = true);
     await showModalBottomSheet<void>(
       context: context,
@@ -134,7 +139,7 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
         _openSheetNavigator = Navigator.of(sheetContext);
         return BlocProvider<EmployeeLoansBloc>.value(
           value: _loansBloc,
-          child: LoanRepaySheet(loan: loan),
+          child: LoanRepaySheet(loan: loan, draft: draft),
         );
       },
     );
@@ -210,6 +215,7 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
                   canRepay: _canRepay,
                   canViewLogs: _canViewLogs,
                   onRepay: () => _openRepaySheet(loan!),
+                  onEditDraft: (draft) => _openRepaySheet(loan!, draft: draft),
                 );
               },
             ),
@@ -232,6 +238,7 @@ class _LoanDetailsBody extends StatelessWidget {
     required this.canRepay,
     required this.canViewLogs,
     required this.onRepay,
+    required this.onEditDraft,
   });
 
   final EmployeeLoanEntity loan;
@@ -244,6 +251,7 @@ class _LoanDetailsBody extends StatelessWidget {
   final bool canRepay;
   final bool canViewLogs;
   final VoidCallback onRepay;
+  final void Function(PendingOperationModel draft) onEditDraft;
 
   @override
   Widget build(BuildContext context) {
@@ -254,6 +262,11 @@ class _LoanDetailsBody extends StatelessWidget {
           padding: const EdgeInsets.all(AppDimensions.pagePaddingMobile),
           children: [
             const PendingOperationsBanner(),
+            _PendingRepaymentsCard(
+              loan: loan,
+              canRepay: canRepay,
+              onEdit: onEditDraft,
+            ),
             // ملخص السلفة
             _SummaryCard(loan: loan),
             const SizedBox(height: AppDimensions.itemSpacing),
@@ -580,6 +593,153 @@ class _LoanLogsCard extends StatelessWidget {
                 )),
         ],
       ),
+    );
+  }
+}
+
+/// سداد معلّق لهذه السلفة: المبلغ غير المعتمد، وللمرفوض تعديل وإعادة إرسال أو حذف.
+class _PendingRepaymentsCard extends StatelessWidget {
+  const _PendingRepaymentsCard({
+    required this.loan,
+    required this.canRepay,
+    required this.onEdit,
+  });
+
+  final EmployeeLoanEntity loan;
+  final bool canRepay;
+  final void Function(PendingOperationModel draft) onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final service = sl<PendingOperationsService>();
+    return StreamBuilder<List<PendingOperationModel>>(
+      stream: service.operationsStream,
+      initialData: service.ownOperations,
+      builder: (context, snapshot) {
+        final ops = service.repaymentsForLoan(loan.id);
+        if (ops.isEmpty) return const SizedBox.shrink();
+
+        final unconfirmed = ops
+            .where((op) => op.status != PendingOperationStatus.failed)
+            .toList();
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: AppDimensions.itemSpacing),
+          child: AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('سداد معلّق لهذه السلفة',
+                    style: AppTypography.headlineSmall),
+                const SizedBox(height: AppDimensions.spacing8),
+                if (unconfirmed.isNotEmpty)
+                  Text(
+                    'مبلغ معلّق لم يُعتمد بعد: '
+                    '${AppFormatters.amount(PendingOperationsService.sumAmount(unconfirmed))} '
+                    '— لا يؤثر على المتبقي حتى المزامنة',
+                    style: AppTypography.bodySmall,
+                  ),
+                const SizedBox(height: AppDimensions.spacing8),
+                for (final op in ops) ...[
+                  _PendingRepaymentRow(
+                    operation: op,
+                    canRepay: canRepay,
+                    onEdit: () => onEdit(op),
+                    onDelete: () async {
+                      final ok = await showAppConfirmDialog(
+                        context,
+                        title: 'حذف المسودة',
+                        message: 'سيتم حذف هذه المسودة من الجهاز نهائيًا. هل تريد المتابعة؟',
+                        confirmLabel: 'حذف',
+                        useRootNavigator: true,
+                      );
+                      if (ok) await service.deleteOperation(op.id);
+                    },
+                  ),
+                  const SizedBox(height: AppDimensions.spacing8),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PendingRepaymentRow extends StatelessWidget {
+  const _PendingRepaymentRow({
+    required this.operation,
+    required this.canRepay,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final PendingOperationModel operation;
+  final bool canRepay;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final amount = (operation.payload['amount'] as num?) ?? 0;
+    final (label, color) = switch (operation.status) {
+      PendingOperationStatus.pending => ('بانتظار الاتصال', AppColors.warning),
+      PendingOperationStatus.syncing => ('جارٍ المزامنة...', AppColors.info),
+      PendingOperationStatus.failed => ('تعذر الاعتماد', AppColors.error),
+    };
+    final isFailed = operation.status == PendingOperationStatus.failed;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                AppFormatters.amount(amount),
+                style: AppTypography.bodyMedium
+                    .copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            Text(
+              label,
+              style: AppTypography.labelSmall
+                  .copyWith(color: color, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        Text(
+          'وقت الحفظ: ${AppFormatters.date(operation.createdAt)}',
+          style: AppTypography.labelSmall
+              .copyWith(color: AppColors.textSecondary),
+        ),
+        if (isFailed) ...[
+          if (operation.failureReason != null)
+            Padding(
+              padding: const EdgeInsets.only(top: AppDimensions.spacing4),
+              child: Text(
+                'السبب: ${operation.failureReason}',
+                style:
+                    AppTypography.labelSmall.copyWith(color: AppColors.error),
+              ),
+            ),
+          Row(
+            children: [
+              if (canRepay)
+                TextButton(
+                  onPressed: onEdit,
+                  child: const Text('تعديل وإعادة الإرسال'),
+                ),
+              TextButton(
+                onPressed: onDelete,
+                style: TextButton.styleFrom(foregroundColor: AppColors.error),
+                child: const Text('حذف'),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }

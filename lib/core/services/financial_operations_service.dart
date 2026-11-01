@@ -588,6 +588,18 @@ class FinancialOperationsService {
       );
     }
 
+    // الظرف المخصص لا يصرف إلا تصنيفاته المسموحة — والسلفة تصنيفها employee_loan.
+    // فحص صريح هنا بدل أن ترفضه القواعد برسالة صلاحيات مضللة.
+    final loanFundType = envelope['fundType'] as String?;
+    final loanAllowed =
+        ((envelope['allowedExpenseCategories'] ?? const <String>[]) as List)
+            .whereType<String>();
+    if (loanFundType == 'restricted' && !loanAllowed.contains('employee_loan')) {
+      throw const OperationRejectedException(
+        'لا يمكن صرف سلفة من هذا الظرف: الظرف مخصص ولا يشمل بند «سلف الموظفين»',
+      );
+    }
+
     final loanRef = _firestore.collection('employeeLoans').doc();
     final transactionRef = _firestore.collection('transactions').doc();
     final envelopeTransactionRef =

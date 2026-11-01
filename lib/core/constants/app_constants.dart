@@ -20,7 +20,12 @@ abstract final class AppCollections {
   static const String cacheEnvelopesBox = 'cache_envelopes';
   static const String cacheUsersBox = 'cache_users';
   static const String cacheCategoriesBox = 'cache_categories';
-  static const String pendingOperationsBox = 'app_pending_operations';
+
+  /// صندوق الطابور المشفَّر (AES-256).
+  static const String pendingOperationsBox = 'app_pending_operations_enc';
+
+  /// الصندوق القديم غير المشفَّر — يُقرأ مرة واحدة للهجرة ثم يُحذف.
+  static const String legacyPendingOperationsBox = 'app_pending_operations';
 }
 
 /// أدوار المستخدمين (String وليس enum في قاعدة البيانات).

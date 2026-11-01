@@ -46,6 +46,7 @@ final class EmployeeLoansRepayRequested extends EmployeeLoansEvent {
     required this.amount,
     required this.envelopeId,
     this.notes,
+    this.requestId,
   });
 
   final String loanId;
@@ -53,6 +54,10 @@ final class EmployeeLoansRepayRequested extends EmployeeLoansEvent {
   final String envelopeId;
   final String? notes;
 
+  /// معرّف الطلب — تولّده الواجهة مرة واحدة لنافذة السداد ليبقى ثابتًا بين المحاولة
+  /// المباشرة والمسودة التي تُحفظ بعد انتهاء المهلة (فلا يتكرر السداد على الخادم).
+  final String? requestId;
+
   @override
-  List<Object?> get props => [loanId, amount, envelopeId, notes];
+  List<Object?> get props => [loanId, amount, envelopeId, notes, requestId];
 }
