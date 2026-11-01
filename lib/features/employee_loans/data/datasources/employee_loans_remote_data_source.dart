@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../../../core/constants/app_constants.dart';
@@ -93,6 +95,17 @@ class EmployeeLoansRemoteDataSource {
   /// سداد سلفة — عبر العملية الذرية repayLoan
   /// (requestId إلزامي — منع التكرار ذريًا داخل المعاملة).
   Future<void> repayLoan(RepayLoanParams params) async {
-    await _operations.call(AppFunctions.repayLoan, params.toCallableData());
+    try {
+      await _operations
+          .call(AppFunctions.repayLoan, params.toCallableData())
+          .timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      // قد يكون الخادم نفّذ السداد وضاع الرد؛ الكود العابر يجعل الواجهة تعرض
+      // حفظه كمسودة بنفس requestId (آمن ضد التكرار).
+      throw const ServerException(
+        'انتهت مهلة الاتصال — لم يتأكد السداد بعد',
+        code: 'deadline-exceeded',
+      );
+    }
   }
 }

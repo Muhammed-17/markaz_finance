@@ -1,9 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_dimensions.dart';
+import '../../../../app/di/injection.dart';
 import '../../../../core/domain/entities/envelope_entity.dart';
+import '../../../../core/errors/failures.dart';
+import '../../../../core/network/connectivity_service.dart';
+import '../../../../core/services/operation_submitter.dart';
+import '../../../../core/services/pending_operation_handlers.dart';
+import '../../../../core/services/pending_operations_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/utils/money.dart';
@@ -27,6 +36,13 @@ class EnvelopeTransferSheet extends StatefulWidget {
 }
 
 class _EnvelopeTransferSheetState extends State<EnvelopeTransferSheet> {
+  /// يُولَّد مرة واحدة للنافذة: للمحاولة المباشرة والمسودة معًا، فإن ضاع الرد
+  /// بعد تحويل ناجح لا يُحوَّل المبلغ مرتين عند المزامنة.
+  final String _requestId = const Uuid().v4();
+  bool _handlingTransient = false;
+  bool _isOnline = true;
+  StreamSubscription<bool>? _connectivitySub;
+
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _amountController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
@@ -37,6 +53,11 @@ class _EnvelopeTransferSheetState extends State<EnvelopeTransferSheet> {
   @override
   void initState() {
     super.initState();
+    _isOnline = sl<ConnectivityService>().isOnline;
+    _connectivitySub =
+        sl<ConnectivityService>().onConnectivityChanged.listen((online) {
+      if (mounted) setState(() => _isOnline = online);
+    });
     final bloc = context.read<EnvelopesBloc>();
     final active = bloc.state.activeEnvelopes;
     if (active.isNotEmpty) {
@@ -47,6 +68,7 @@ class _EnvelopeTransferSheetState extends State<EnvelopeTransferSheet> {
 
   @override
   void dispose() {
+    _connectivitySub?.cancel();
     _amountController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -72,6 +94,22 @@ class _EnvelopeTransferSheetState extends State<EnvelopeTransferSheet> {
     );
     if (amount == null || amount <= 0) return;
 
+    if (!_isOnline) {
+      final saveDraft = await showAppConfirmDialog(
+        context,
+        title: 'حفظ كمسودة تحويل معلقة',
+        message: 'أنت غير متصل بالإنترنت. سيُحفظ تحويل ${AppFormatters.amount(amount)} '
+            'من "${from.name}" إلى "${to.name}" كمسودة على هذا الجهاز، ولن '
+            'يتغير رصيد أي من الظرفين حتى تتوفر الشبكة وتتم المزامنة (وقد يُرفض '
+            'حينها إن لم يعد رصيد المصدر كافيًا). هل تريد المتابعة؟',
+        confirmLabel: 'حفظ كمسودة',
+        useRootNavigator: true,
+      );
+      if (!saveDraft || !mounted) return;
+      await _saveDraft(from: from, to: to, amount: amount);
+      return;
+    }
+
     final confirmed = await showAppConfirmDialog(
       context,
       title: 'تأكيد التحويل',
@@ -90,11 +128,91 @@ class _EnvelopeTransferSheetState extends State<EnvelopeTransferSheet> {
       notes: _notesController.text.trim().isEmpty
           ? null
           : _notesController.text.trim(),
+      requestId: _requestId,
     )));
+  }
+
+  Future<void> _saveDraft({
+    required EnvelopeEntity from,
+    required EnvelopeEntity to,
+    required double amount,
+  }) async {
+    try {
+      await sl<OperationSubmitter>().saveAsDraft(
+        handler: const TransferEnvelopesHandler(),
+        requestId: _requestId,
+        title: 'تحويل: ${from.name} ← ${to.name} (${AppFormatters.amount(amount)})',
+        payload: {
+          'fromEnvelopeId': from.id,
+          'toEnvelopeId': to.id,
+          'amount': amount,
+          'notes': _notesController.text.trim().isEmpty
+              ? null
+              : _notesController.text.trim(),
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        message: e is Failure ? e.message : 'تعذّر حفظ المسودة',
+        isError: true,
+      );
+      return;
+    }
+    if (!mounted) return;
+    showAppSnackBar(
+      context,
+      message:
+          'تم حفظ التحويل كمسودة معلقة — ستتم المزامنة تلقائيًا فور توفر الإنترنت',
+    );
+    Navigator.of(context).pop();
+  }
+
+  /// فشل مباشر بسبب الشبكة/المهلة: قد يكون الخادم نفّذ التحويل فعلًا وضاع الرد،
+  /// فنعرض حفظه كمسودة بنفس requestId بدل إعادة المحاولة بمعرّف جديد.
+  Future<void> _offerDraftAfterTransientFailure() async {
+    if (_handlingTransient || !mounted) return;
+    final active = context.read<EnvelopesBloc>().state.activeEnvelopes;
+    final from = _findEnvelope(active, _fromEnvelopeId);
+    final to = _findEnvelope(active, _toEnvelopeId);
+    final amount = double.tryParse(
+      _amountController.text.trim().replaceAll(',', ''),
+    );
+    if (from == null || to == null || amount == null || amount <= 0) return;
+    _handlingTransient = true;
+    try {
+      final confirmed = await showAppConfirmDialog(
+        context,
+        title: 'تعذّر الوصول إلى الخادم',
+        message: 'لم يصلنا رد من الخادم، وقد يكون التحويل نُفّذ فعلًا. لتفادي '
+            'تنفيذه مرتين، سيُحفظ كمسودة معلقة بالمعرّف نفسه وتتم مزامنته '
+            'تلقائيًا (ولن يتكرر). هل تريد المتابعة؟',
+        confirmLabel: 'حفظ كمسودة',
+        useRootNavigator: true,
+      );
+      if (!confirmed || !mounted) return;
+      await _saveDraft(from: from, to: to, amount: amount);
+    } finally {
+      _handlingTransient = false;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    return BlocListener<EnvelopesBloc, EnvelopesState>(
+      listenWhen: (previous, state) =>
+          previous.isSubmitting &&
+          state.status == EnvelopesStatus.operationFailure &&
+          state.lastOperation == EnvelopesOperation.transfer &&
+          state.failure != null &&
+          PendingOperationsService.isTransientFailureModel(state.failure!),
+      listener: (context, state) => _offerDraftAfterTransientFailure(),
+      child: _buildForm(context),
+    );
+  }
+
+  Widget _buildForm(BuildContext context) {
     return BlocBuilder<EnvelopesBloc, EnvelopesState>(
       builder: (context, state) {
         final active = state.activeEnvelopes;

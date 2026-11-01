@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../app/di/injection.dart';
 import '../../../../core/errors/error_text.dart';
@@ -11,6 +12,8 @@ import '../../../../core/constants/app_durations.dart';
 import '../../../../core/data/models/envelope_model.dart';
 import '../../../../core/data/models/transaction_model.dart';
 import '../../../../core/services/financial_operations_service.dart';
+import '../../../../core/services/operation_submitter.dart';
+import '../../../../core/services/pending_operation_handlers.dart';
 import '../../../../core/services/permission_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
@@ -41,6 +44,24 @@ class _TransactionsPageState extends State<TransactionsPage> {
   String _branch = _Filter.all;
   String _envelope = _Filter.all;
   bool _newestFirst = true;
+
+  /// التقسيم المحلي: عدد الحركات المعروضة (القراءة من Firestore كما هي).
+  static const int _pageSize = 30;
+  int _visibleCount = _pageSize;
+
+  /// مستمع واحد للصفحة كلها: إنشاؤه داخل build كان يعيد الاشتراك
+  /// عند كل ضغطة بحث أو تغيير فلتر.
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _transactionsStream =
+      FirebaseFirestore.instance
+          .collection(AppCollections.transactions)
+          .snapshots();
+
+  /// أي تغيير في الفلاتر/الترتيب/البحث يعيد العرض إلى أول صفحة.
+  void _applyFilter(VoidCallback change) => setState(() {
+        change();
+        _visibleCount = _pageSize;
+      });
+
   /// معرّف الحركة قيد الإلغاء حاليًا (المؤشر يظهر في بطاقتها وحدها).
   String? _cancellingId;
 
@@ -92,6 +113,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
       _center = _Filter.all;
       _branch = _Filter.all;
       _envelope = _Filter.all;
+      _visibleCount = _pageSize;
     });
   }
 
@@ -185,9 +207,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
           );
         }
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection(AppCollections.transactions)
-              .snapshots(),
+          stream: _transactionsStream,
           builder: (context, snapshot) {
             if (snapshot.hasError) {
               return AppErrorView(
@@ -214,18 +234,22 @@ class _TransactionsPageState extends State<TransactionsPage> {
               cancellingId: _cancellingId,
               canCancel:
                   PermissionService.can(profile, PermissionAction.cancel),
-              onSearchChanged: () => setState(() {}),
-              onTypeChanged: (value) => setState(() => _type = value),
-              onStatusChanged: (value) => setState(() => _status = value),
-              onCategoryChanged: (value) => setState(() => _category = value),
-              onCenterChanged: (value) => setState(() {
+              visibleCount: _visibleCount,
+              onLoadMore: () => setState(() => _visibleCount += _pageSize),
+              onSearchChanged: () => _applyFilter(() {}),
+              onTypeChanged: (value) => _applyFilter(() => _type = value),
+              onStatusChanged: (value) => _applyFilter(() => _status = value),
+              onCategoryChanged: (value) =>
+                  _applyFilter(() => _category = value),
+              onCenterChanged: (value) => _applyFilter(() {
                 _center = value;
                 _branch = _Filter.all;
               }),
-              onBranchChanged: (value) => setState(() => _branch = value),
-              onEnvelopeChanged: (value) => setState(() => _envelope = value),
+              onBranchChanged: (value) => _applyFilter(() => _branch = value),
+              onEnvelopeChanged: (value) =>
+                  _applyFilter(() => _envelope = value),
               onToggleSort: () =>
-                  setState(() => _newestFirst = !_newestFirst),
+                  _applyFilter(() => _newestFirst = !_newestFirst),
               onClearFilters: _clearFilters,
               onCancel: _cancel,
             );
@@ -251,6 +275,8 @@ class _TransactionsView extends StatelessWidget {
     required this.hasActiveFilters,
     required this.cancellingId,
     required this.canCancel,
+    required this.visibleCount,
+    required this.onLoadMore,
     required this.onSearchChanged,
     required this.onTypeChanged,
     required this.onStatusChanged,
@@ -276,6 +302,8 @@ class _TransactionsView extends StatelessWidget {
   final bool hasActiveFilters;
   final String? cancellingId;
   final bool canCancel;
+  final int visibleCount;
+  final VoidCallback onLoadMore;
   final VoidCallback onSearchChanged;
   final ValueChanged<String> onTypeChanged;
   final ValueChanged<String> onStatusChanged;
@@ -306,7 +334,11 @@ class _TransactionsView extends StatelessWidget {
         .toList()
       ..sort((a, b) => _categoryLabel(a).compareTo(_categoryLabel(b)));
 
-    final groups = _groupByDay(visible);
+    final shown = visible.length > visibleCount
+        ? visible.sublist(0, visibleCount)
+        : visible;
+    final remaining = visible.length - shown.length;
+    final groups = _groupByDay(shown);
 
     return AppPageScroll(
       children: [
@@ -375,6 +407,18 @@ class _TransactionsView extends StatelessWidget {
               cancellingId: cancellingId,
               onCancel: onCancel,
             ),
+        if (remaining > 0) ...[
+          const SizedBox(height: AppDimensions.spacing12),
+          Center(
+            child: OutlinedButton.icon(
+              onPressed: onLoadMore,
+              icon: const Icon(Icons.expand_more_rounded),
+              label: Text(
+                'عرض المزيد (${AppFormatters.integer(remaining)} متبقية)',
+              ),
+            ),
+          ),
+        ],
         // مساحة سفلية حتى لا يغطي الزر العائم آخر حركة.
         const SizedBox(height: 88),
       ],
@@ -695,7 +739,7 @@ class _FiltersCard extends StatelessWidget {
 
 /// فلاتر المركز والفرع والظرف المالي (مع خيار «الكل»): الأسماء تُقرأ من
 /// centers / branches / fundEnvelopes، وقائمة الفروع تُحصر بالمركز المختار.
-class _ScopeFilters extends StatelessWidget {
+class _ScopeFilters extends StatefulWidget {
   const _ScopeFilters({
     required this.center,
     required this.branch,
@@ -713,16 +757,34 @@ class _ScopeFilters extends StatelessWidget {
   final ValueChanged<String> onEnvelopeChanged;
 
   @override
+  State<_ScopeFilters> createState() => _ScopeFiltersState();
+}
+
+class _ScopeFiltersState extends State<_ScopeFilters> {
+  // مستمعات تُنشأ مرة واحدة (لا تُعاد عند كل إعادة بناء للصفحة).
+  late final _centersStream = FirebaseFirestore.instance
+      .collection(AppCollections.centers)
+      .snapshots();
+  late final _branchesStream = FirebaseFirestore.instance
+      .collection(AppCollections.branches)
+      .snapshots();
+  late final _envelopesStream = FirebaseFirestore.instance
+      .collection(AppCollections.fundEnvelopes)
+      .snapshots();
+
+  @override
   Widget build(BuildContext context) {
+    final center = widget.center;
+    final branch = widget.branch;
+    final envelope = widget.envelope;
+    final onCenterChanged = widget.onCenterChanged;
+    final onBranchChanged = widget.onBranchChanged;
+    final onEnvelopeChanged = widget.onEnvelopeChanged;
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection(AppCollections.centers)
-          .snapshots(),
+      stream: _centersStream,
       builder: (context, centersSnap) {
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection(AppCollections.branches)
-              .snapshots(),
+          stream: _branchesStream,
           builder: (context, branchesSnap) {
             final centers = (centersSnap.data?.docs ?? const [])
                 .map(CenterModel.fromSnapshot)
@@ -792,9 +854,7 @@ class _ScopeFilters extends StatelessWidget {
             );
 
             return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection(AppCollections.fundEnvelopes)
-                  .snapshots(),
+              stream: _envelopesStream,
               builder: (context, envelopesSnap) {
                 final envelopes = (envelopesSnap.data?.docs ?? const [])
                     .map(EnvelopeModel.fromSnapshot)
@@ -1227,6 +1287,10 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
   final _nameController = TextEditingController();
   final _amountController = TextEditingController();
   final _notesController = TextEditingController();
+
+  /// معرّف واحد لنافذة الإضافة: يُستخدم في المحاولة المباشرة والمسودة معًا،
+  /// فإن ضاع الرد بعد التزام ناجح لا تتكرر الحركة عند المزامنة.
+  final String _requestId = const Uuid().v4();
   String _type = AppTransactionTypes.income;
   String? _category;
   String? _envelopeId;
@@ -1295,9 +1359,12 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
 
     setState(() => _saving = true);
     try {
-      await sl<FinancialOperationsService>().call(
-        AppFunctions.createTransaction,
-        {
+      final outcome = await sl<OperationSubmitter>().submit(
+        handler: const CreateTransactionHandler(),
+        requestId: _requestId,
+        title: '${_type == AppTransactionTypes.income ? 'إيراد' : 'مصروف'}: '
+            '${_nameController.text.trim()} (${AppFormatters.amount(amount)})',
+        payload: {
           'envelopeId': envelope.id,
           // «الكل» = بلا اختيار: يبقى مركز الظرف ويُترك الفرع فارغًا.
           'centerId': _centerId == _Filter.all ? null : _centerId,
@@ -1316,7 +1383,14 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
       if (mounted) {
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم تسجيل الحركة وتحديث رصيد الظرف.')),
+          SnackBar(
+            content: Text(
+              outcome == SubmitOutcome.sent
+                  ? 'تم تسجيل الحركة وتحديث رصيد الظرف.'
+                  : 'حُفظت الحركة كمسودة معلّقة على هذا الجهاز وتُرسل تلقائيًا '
+                      'عند توفر الاتصال (ولن تتكرر).',
+            ),
+          ),
         );
       }
     } catch (error) {

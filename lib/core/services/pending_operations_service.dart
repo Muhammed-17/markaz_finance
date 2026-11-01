@@ -19,9 +19,15 @@ class PendingOperationsService {
     required ConnectivityService connectivityService,
     required FinancialOperationsService financialOperationsService,
     PendingOperationRegistry? registry,
+    // قابلة للحقن للاختبار بدون Firebase؛ الافتراضي هو FirebaseAuth.
+    String? Function()? currentUid,
+    Stream<String?>? authUidChanges,
   })  : _connectivity = connectivityService,
         _operations = financialOperationsService,
-        _registry = registry ?? PendingOperationRegistry.standard() {
+        _registry = registry ?? PendingOperationRegistry.standard(),
+        _currentUid =
+            currentUid ?? (() => FirebaseAuth.instance.currentUser?.uid),
+        _authUidChanges = authUidChanges {
     _init();
   }
 
@@ -29,8 +35,10 @@ class PendingOperationsService {
   final FinancialOperationsService _operations;
 
   final PendingOperationRegistry _registry;
+  final String? Function() _currentUid;
+  final Stream<String?>? _authUidChanges;
   StreamSubscription<bool>? _networkSub;
-  StreamSubscription<User?>? _authSub;
+  StreamSubscription<String?>? _authSub;
   Timer? _retryTimer;
   int _transientAttempts = 0;
 
@@ -92,7 +100,7 @@ class PendingOperationsService {
   /// عمليات المستخدم الحالي فقط — هي ما يراه ويُزامنه هذا المستخدم.
   /// عمليات مستخدمين آخرين على نفس الجهاز تبقى محفوظة لأصحابها ولا تظهر هنا.
   List<PendingOperationModel> get ownOperations {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = _currentUid();
     if (uid == null) return const [];
     return allOperations.where((op) => op.ownerUid == uid).toList();
   }
@@ -147,10 +155,12 @@ class PendingOperationsService {
 
     // مزامنة مسودات الجلسة السابقة عند الإقلاع/تسجيل الدخول: الاتصال قد يكون
     // متاحًا أصلًا فلا يصدر حدث تغيّر شبكة. أول بث يأتي بعد استعادة الجلسة.
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+    final authChanges = _authUidChanges ??
+        FirebaseAuth.instance.authStateChanges().map((user) => user?.uid);
+    _authSub = authChanges.listen((uid) {
       _retryTimer?.cancel();
       _notify();
-      if (user != null && hasPending && !_isSyncing) {
+      if (uid != null && hasPending && !_isSyncing) {
         _transientAttempts = 0;
         syncAll();
       }
@@ -163,16 +173,23 @@ class PendingOperationsService {
     }
   }
 
-  /// جدولة إعادة محاولة بتراجع أسّي (5ث، 15ث، 45ث ... حتى 5د).
-  void _scheduleRetry() {
-    _retryTimer?.cancel();
-    if (_transientAttempts >= _maxTransientAttempts) return;
-    final seconds = _baseRetryDelay.inSeconds * pow(3, _transientAttempts).toInt();
-    final delay = Duration(
+  /// مهلة إعادة المحاولة بعد [attempt] أعطال عابرة متتالية: 5ث، 15ث، 45ث، ...
+  /// وتُقصّ عند 5 دقائق.
+  @visibleForTesting
+  static Duration retryDelay(int attempt) {
+    final seconds = _baseRetryDelay.inSeconds * pow(3, attempt).toInt();
+    return Duration(
       seconds: seconds > _maxRetryDelay.inSeconds
           ? _maxRetryDelay.inSeconds
           : seconds,
     );
+  }
+
+  /// جدولة إعادة محاولة بتراجع أسّي (5ث، 15ث، 45ث ... حتى 5د).
+  void _scheduleRetry() {
+    _retryTimer?.cancel();
+    if (_transientAttempts >= _maxTransientAttempts) return;
+    final delay = retryDelay(_transientAttempts);
     _transientAttempts++;
     _retryTimer = Timer(delay, () {
       if (hasPending && !_isSyncing) syncAll();
@@ -202,7 +219,7 @@ class PendingOperationsService {
     if (_isSyncing || !_connectivity.isOnline) return;
     await _recovered;
 
-    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    final currentUid = _currentUid();
     if (currentUid == null) return; // لا جلسة نشطة
 
     _retryTimer?.cancel();

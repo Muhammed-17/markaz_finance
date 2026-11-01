@@ -1,6 +1,7 @@
 import '../constants/app_constants.dart';
 import '../data/models/pending_operation_model.dart';
 import 'financial_operations_service.dart';
+import 'operation_ids.dart';
 
 /// معالج نوع واحد من العمليات المعلقة: يعرف إصدارات بنية بياناته المدعومة،
 /// ويتحقق منها، وينفّذها على الخادم.
@@ -70,6 +71,141 @@ class RepayLoanHandler extends PendingOperationHandler {
   }
 }
 
+bool _nonEmpty(Object? v) => v is String && v.trim().isNotEmpty;
+bool _positive(Object? v) => v is num && v > 0;
+
+/// إنشاء حركة مالية (createTransaction).
+///
+/// سياسة التعارض: الخادم يعيد التحقق من الرصيد والظرف النشط والتصنيف المسموح
+/// وقت المزامنة. إن تغيّر شيء منها (ظرف أُرشف، رصيد لم يعد يكفي، تصنيف لم يعد
+/// مسموحًا) تُرفض المسودة وتبقى «تعذر الاعتماد» بالسبب ليحذفها المستخدم
+/// ويسجّلها من جديد؛ لا يُعدَّل أي مبلغ تلقائيًا.
+class CreateTransactionHandler extends PendingOperationHandler {
+  const CreateTransactionHandler();
+
+  /// الحقول: envelopeId, type, category, name, amount, paymentMethod,
+  /// forMonth, notes, requestId, centerId?, branchId?.
+  static const int schemaVersion = 1;
+
+  @override
+  String get type => AppFunctions.createTransaction;
+
+  @override
+  int get currentSchemaVersion => schemaVersion;
+
+  @override
+  int get minSupportedSchemaVersion => 1;
+
+  @override
+  String? validatePayload(Map<String, dynamic> payload) {
+    final name = payload['name'];
+    final kind = payload['type'];
+    final valid = _nonEmpty(payload['envelopeId']) &&
+        (kind == 'income' || kind == 'expense') &&
+        _nonEmpty(payload['category']) &&
+        name is String &&
+        name.trim().length >= 3 &&
+        _positive(payload['amount']) &&
+        _nonEmpty(payload['paymentMethod']) &&
+        OperationIds.isValid(payload['requestId']);
+    return valid
+        ? null
+        : 'بيانات مسودة الحركة غير مكتملة — احذفها وسجّل الحركة من جديد';
+  }
+
+  @override
+  Future<void> execute(
+    FinancialOperationsService operations,
+    PendingOperationModel operation,
+  ) async {
+    await operations.call(type, operation.payload);
+  }
+}
+
+/// صرف سلفة موظف (createEmployeeLoan).
+///
+/// سياسة التعارض: الخادم يتحقق من كفاية رصيد الظرف وأن الظرف المخصص يشمل
+/// بند «سلف الموظفين». عند الرفض تبقى المسودة بالسبب ولا يُصرف شيء.
+class CreateEmployeeLoanHandler extends PendingOperationHandler {
+  const CreateEmployeeLoanHandler();
+
+  /// الحقول: employeeName, employeeId?, totalAmount, envelopeId, notes?, requestId.
+  static const int schemaVersion = 1;
+
+  @override
+  String get type => AppFunctions.createEmployeeLoan;
+
+  @override
+  int get currentSchemaVersion => schemaVersion;
+
+  @override
+  int get minSupportedSchemaVersion => 1;
+
+  @override
+  String? validatePayload(Map<String, dynamic> payload) {
+    final name = payload['employeeName'];
+    final valid = name is String &&
+        name.trim().length >= 3 &&
+        _positive(payload['totalAmount']) &&
+        _nonEmpty(payload['envelopeId']) &&
+        OperationIds.isValid(payload['requestId']);
+    return valid
+        ? null
+        : 'بيانات مسودة السلفة غير مكتملة — احذفها وسجّل السلفة من جديد';
+  }
+
+  @override
+  Future<void> execute(
+    FinancialOperationsService operations,
+    PendingOperationModel operation,
+  ) async {
+    await operations.call(type, operation.payload);
+  }
+}
+
+/// تحويل بين ظرفين (transferBetweenEnvelopes) — الأكثر حالات حافة.
+///
+/// سياسة التعارض: الخادم يتحقق وقت المزامنة من وجود الظرفين وكفاية رصيد المصدر.
+/// أي رفض (ظرف محذوف/أُرشف، رصيد نقص) يترك المسودة «تعذر الاعتماد» بالسبب،
+/// ولا يتم تحويل جزئي: العملية ذرية بالكامل أو لا شيء.
+class TransferEnvelopesHandler extends PendingOperationHandler {
+  const TransferEnvelopesHandler();
+
+  /// الحقول: fromEnvelopeId, toEnvelopeId, amount, notes?, requestId.
+  static const int schemaVersion = 1;
+
+  @override
+  String get type => AppFunctions.transferBetweenEnvelopes;
+
+  @override
+  int get currentSchemaVersion => schemaVersion;
+
+  @override
+  int get minSupportedSchemaVersion => 1;
+
+  @override
+  String? validatePayload(Map<String, dynamic> payload) {
+    final from = payload['fromEnvelopeId'];
+    final to = payload['toEnvelopeId'];
+    final valid = _nonEmpty(from) &&
+        _nonEmpty(to) &&
+        from != to &&
+        _positive(payload['amount']) &&
+        OperationIds.isValid(payload['requestId']);
+    return valid
+        ? null
+        : 'بيانات مسودة التحويل غير مكتملة — احذفها وسجّل التحويل من جديد';
+  }
+
+  @override
+  Future<void> execute(
+    FinancialOperationsService operations,
+    PendingOperationModel operation,
+  ) async {
+    await operations.call(type, operation.payload);
+  }
+}
+
 /// سجل المعالجات بحسب النوع، ويقرر هل المسودة قابلة للإرسال أصلًا.
 class PendingOperationRegistry {
   PendingOperationRegistry(Iterable<PendingOperationHandler> handlers)
@@ -77,7 +213,12 @@ class PendingOperationRegistry {
 
   /// المعالجات المدعومة في هذه النسخة من التطبيق.
   factory PendingOperationRegistry.standard() =>
-      PendingOperationRegistry(const [RepayLoanHandler()]);
+      PendingOperationRegistry(const [
+        RepayLoanHandler(),
+        CreateTransactionHandler(),
+        CreateEmployeeLoanHandler(),
+        TransferEnvelopesHandler(),
+      ]);
 
   final Map<String, PendingOperationHandler> _byType;
 

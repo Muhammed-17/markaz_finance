@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:get_it/get_it.dart';
 
 import '../../core/network/connectivity_service.dart';
@@ -6,6 +7,7 @@ import '../../core/services/financial_operations_service.dart';
 import '../../core/services/firebase_service.dart';
 import '../../core/services/hive_encryption_service.dart';
 import '../../core/services/hive_service.dart';
+import '../../core/services/operation_submitter.dart';
 import '../../core/services/pending_operations_service.dart';
 import '../../features/auth/di/auth_injection.dart';
 import '../../features/branches/di/branches_injection.dart';
@@ -52,6 +54,16 @@ Future<void> configureDependencies() async {
     () => PendingOperationsService(
       connectivityService: sl<ConnectivityService>(),
       financialOperationsService: sl<FinancialOperationsService>(),
+    ),
+  );
+  // إرسال مباشر مع تحويل تلقائي إلى مسودة عند انقطاع الشبكة/انتهاء المهلة.
+  sl.registerLazySingleton<OperationSubmitter>(
+    () => OperationSubmitter(
+      isOnline: () => sl<ConnectivityService>().isOnline,
+      send: (type, payload) =>
+          sl<FinancialOperationsService>().call(type, payload),
+      saveDraft: (op) => sl<PendingOperationsService>().saveOperation(op),
+      currentUid: () => FirebaseAuth.instance.currentUser?.uid,
     ),
   );
   sl.registerLazySingleton<CategoriesService>(

@@ -12,6 +12,7 @@ class CreateLoanParams extends Equatable {
     required this.totalAmount,
     required this.envelopeId,
     this.notes,
+    this.requestId,
   });
 
   final String employeeName;
@@ -25,17 +26,22 @@ class CreateLoanParams extends Equatable {
   final String envelopeId;
   final String? notes;
 
+  /// معرّف طلب فريد يولّده العميل: يجعل صرف السلفة idempotent (إعادة الإرسال
+  /// بعد نجاح ضاع ردّه لا تصرف السلفة مرتين) ويُستخدم نفسه للمسودة المعلّقة.
+  final String? requestId;
+
   Map<String, dynamic> toCallableData() => {
         'employeeName': employeeName,
         'employeeId': employeeId,
         'totalAmount': totalAmount,
         'envelopeId': envelopeId,
         'notes': notes,
+        if (requestId != null) 'requestId': requestId,
       };
 
   @override
   List<Object?> get props =>
-      [employeeName, employeeId, totalAmount, envelopeId, notes];
+      [employeeName, employeeId, totalAmount, envelopeId, notes, requestId];
 }
 
 /// معاملات سداد سلفة — تُنفذ عبر الدالة السحابية repayLoan.

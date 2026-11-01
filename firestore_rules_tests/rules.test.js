@@ -466,3 +466,100 @@ describe('5. صلاحيات المستخدمين والتصعيد', () => {
     );
   });
 });
+
+// =====================================================================
+// 6. Idempotency: معرّفات مشتقة من requestId (تمنع تكرار المبلغ عند إعادة الإرسال)
+//    الخادم (FinancialOperationsService) يتحقق من وجود المستند قبل الكتابة؛
+//    هذه الاختبارات تثبت أن القواعد نفسها ترفض أي إعادة كتابة لمستند موجود
+//    فلا تتكرر حتى لو تجاوز عميلٌ ما فحص التطبيق.
+// =====================================================================
+describe('6. Idempotency بمعرّفات مشتقة من requestId', () => {
+  const requestId = 'req-1234-abcd';
+
+  function txnBatch(db) {
+    const batch = db.batch();
+    batch.set(db.doc(`transactions/${requestId}`), {
+      centerId: 'center_1', branchId: null, envelopeId: 'env_1',
+      type: 'expense', category: 'salaries', name: 'صرف راتب',
+      amount: 200, paymentMethod: 'cash', forMonth: null,
+      status: 'active', employeeLoanId: null, attachmentPaths: [],
+      notes: '', createdAt: new Date(),
+    });
+    batch.set(db.doc(`envelopeTransactions/${requestId}_env`), {
+      envelopeId: 'env_1', transactionId: requestId,
+      type: 'expense', amount: 200, notes: '',
+      createdBy: 'user_creator', createdAt: new Date(),
+    });
+    batch.update(db.doc('fundEnvelopes/env_1'), {
+      currentBalance: 800, lastEnvTxId: `${requestId}_env`,
+    });
+    return batch;
+  }
+
+  test('حركة: الإرسال الأول ينجح وإعادة الكتابة بنفس المعرّف تفشل', async () => {
+    await setupBaseData();
+    const db = testEnv.authenticatedContext('user_creator').firestore();
+    await assertSucceeds(txnBatch(db).commit());
+    // الإعادة: المستندان موجودان فلا يُنشآن ثانية ولا يُخصم الرصيد مرتين.
+    await assertFails(txnBatch(db).commit());
+  });
+
+  test('سلفة: الصرف الأول ينجح وإعادته بنفس المعرّفات تفشل', async () => {
+    await setupBaseData();
+    const db = testEnv.authenticatedContext('user_creator').firestore();
+    const build = () => {
+      const batch = db.batch();
+      batch.set(db.doc(`employeeLoans/${requestId}`), {
+        employeeId: null, employeeName: 'أحمد علي',
+        totalAmount: 300, remainingBalance: 300, status: 'active',
+        notes: '', version: 1, disbursementTxnId: `${requestId}_tx`,
+      });
+      batch.set(db.doc(`transactions/${requestId}_tx`), {
+        centerId: 'center_1', branchId: null, envelopeId: 'env_1',
+        type: 'expense', category: 'employee_loan', name: 'سلفة: أحمد علي',
+        amount: 300, paymentMethod: 'cash', forMonth: null,
+        status: 'active', employeeLoanId: requestId, attachmentPaths: [],
+        notes: '', createdAt: new Date(),
+      });
+      batch.set(db.doc(`envelopeTransactions/${requestId}_env`), {
+        envelopeId: 'env_1', transactionId: `${requestId}_tx`,
+        type: 'expense', amount: 300, notes: '',
+        createdBy: 'user_creator', createdAt: new Date(),
+      });
+      batch.update(db.doc('fundEnvelopes/env_1'), {
+        currentBalance: 700, lastEnvTxId: `${requestId}_env`,
+      });
+      return batch;
+    };
+    await assertSucceeds(build().commit());
+    await assertFails(build().commit());
+  });
+
+  test('تحويل: التنفيذ الأول ينجح وإعادته بنفس tr_<requestId> تفشل', async () => {
+    await setupBaseData();
+    const db = testEnv.authenticatedContext('user_creator').firestore();
+    const transferId = `tr_${requestId}`;
+    const build = () => {
+      const batch = db.batch();
+      batch.set(db.doc(`envelopeTransactions/${transferId}_out`), {
+        envelopeId: 'env_1', transactionId: null,
+        type: 'transfer_out', amount: 200, notes: '',
+        createdBy: 'user_creator', createdAt: new Date(),
+      });
+      batch.set(db.doc(`envelopeTransactions/${transferId}_in`), {
+        envelopeId: 'env_2', transactionId: null,
+        type: 'transfer_in', amount: 200, notes: '',
+        createdBy: 'user_creator', createdAt: new Date(),
+      });
+      batch.update(db.doc('fundEnvelopes/env_1'), {
+        currentBalance: 800, lastEnvTxId: `${transferId}_out`,
+      });
+      batch.update(db.doc('fundEnvelopes/env_2'), {
+        currentBalance: 700, lastEnvTxId: `${transferId}_in`,
+      });
+      return batch;
+    };
+    await assertSucceeds(build().commit());
+    await assertFails(build().commit());
+  });
+});

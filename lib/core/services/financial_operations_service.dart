@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../errors/exceptions.dart';
+import 'operation_ids.dart';
 
 /// خدمة العمليات المالية الحساسة — بديل مجاني كامل لمعاملات Cloud Functions
 /// المدفوعة.
@@ -118,6 +119,17 @@ class FinancialOperationsService {
     final paymentMethod = data['paymentMethod'] as String?;
     final notes = data['notes'] as String? ?? '';
 
+    // Idempotency: مع requestId تُكتب الحركة بمعرّف مشتق منه، فإعادة إرسال
+    // العملية نفسها (بعد التزام ناجح ضاع ردّه) تُعدّ ناجحة دون تنفيذ ثانٍ.
+    // الفحص قبل أي تحقق من الرصيد: الرصيد الحالي يشمل أثر التنفيذ الأول أصلًا.
+    final requestId = OperationIds.optional(data['requestId']);
+    final txRef = requestId == null
+        ? _firestore.collection('transactions').doc()
+        : _firestore.collection('transactions').doc(requestId);
+    if (requestId != null && (await tx.get(txRef)).exists) {
+      return {'transactionId': txRef.id, 'duplicate': true};
+    }
+
     if (envelopeId == null || envelopeId.isEmpty) {
       throw const ValidationException('معرّف الظرف المالي مطلوب');
     }
@@ -195,9 +207,11 @@ class FinancialOperationsService {
     final newBalance =
         type == 'income' ? currentBalance + amount : currentBalance - amount;
 
-    final txRef = _firestore.collection('transactions').doc();
-    final envelopeTransactionRef =
-        _firestore.collection('envelopeTransactions').doc();
+    final envelopeTransactionRef = requestId == null
+        ? _firestore.collection('envelopeTransactions').doc()
+        : _firestore
+            .collection('envelopeTransactions')
+            .doc(OperationIds.envelopeTransaction(requestId));
     final now = FieldValue.serverTimestamp();
 
     tx.set(txRef, <String, dynamic>{
@@ -362,6 +376,20 @@ class FinancialOperationsService {
       throw const ValidationException('المبلغ يجب أن يكون أكبر من صفر');
     }
 
+    // Idempotency: مع requestId يُشتق معرّف التحويل منه، فإن وُجدت حركة الخروج
+    // فهذا التحويل نُفّذ سابقًا (الفحص قبل الرصيد لأن الرصيد يشمل أثره أصلًا).
+    final requestId = OperationIds.optional(data['requestId']);
+    final transferId = requestId == null
+        ? 'tr_${DateTime.now().millisecondsSinceEpoch}_${fromId}_$toId'
+        : OperationIds.transfer(requestId);
+    final fromEnvTxRef =
+        _firestore.collection('envelopeTransactions').doc('${transferId}_out');
+    final toEnvTxRef =
+        _firestore.collection('envelopeTransactions').doc('${transferId}_in');
+    if (requestId != null && (await tx.get(fromEnvTxRef)).exists) {
+      return {'duplicate': true};
+    }
+
     final fromRef = _firestore.collection('fundEnvelopes').doc(fromId);
     final toRef = _firestore.collection('fundEnvelopes').doc(toId);
 
@@ -382,12 +410,6 @@ class FinancialOperationsService {
     final toBalance =
         (toSnap.data()!['currentBalance'] as num?)?.toDouble() ?? 0.0;
     final now = FieldValue.serverTimestamp();
-    final transferId =
-        'tr_${DateTime.now().millisecondsSinceEpoch}_${fromId}_$toId';
-    final fromEnvTxRef =
-        _firestore.collection('envelopeTransactions').doc('${transferId}_out');
-    final toEnvTxRef =
-        _firestore.collection('envelopeTransactions').doc('${transferId}_in');
 
     tx.update(fromRef, <String, dynamic>{
       'currentBalance': fromBalance - amount,
@@ -564,6 +586,23 @@ class FinancialOperationsService {
     final employeeId = data['employeeId'] as String?;
     final notes = data['notes'] as String? ?? '';
 
+    // Idempotency: السلفة تأخذ requestId كمعرّف، وحركة الصرف وحركة الظرف
+    // معرّفان مشتقان منه. إعادة الإرسال بعد نجاح سابق تُعيد النتيجة نفسها.
+    final requestId = OperationIds.optional(data['requestId']);
+    final loanRef = requestId == null
+        ? _firestore.collection('employeeLoans').doc()
+        : _firestore.collection('employeeLoans').doc(requestId);
+    if (requestId != null) {
+      final existing = await tx.get(loanRef);
+      if (existing.exists) {
+        return {
+          'loanId': loanRef.id,
+          'transactionId': existing.data()?['disbursementTxnId'],
+          'duplicate': true,
+        };
+      }
+    }
+
     if (amount <= 0) {
       throw const ValidationException('مبلغ السلفة يجب أن يكون أكبر من صفر');
     }
@@ -600,10 +639,16 @@ class FinancialOperationsService {
       );
     }
 
-    final loanRef = _firestore.collection('employeeLoans').doc();
-    final transactionRef = _firestore.collection('transactions').doc();
-    final envelopeTransactionRef =
-        _firestore.collection('envelopeTransactions').doc();
+    final transactionRef = requestId == null
+        ? _firestore.collection('transactions').doc()
+        : _firestore
+            .collection('transactions')
+            .doc(OperationIds.loanDisbursement(requestId));
+    final envelopeTransactionRef = requestId == null
+        ? _firestore.collection('envelopeTransactions').doc()
+        : _firestore
+            .collection('envelopeTransactions')
+            .doc(OperationIds.envelopeTransaction(requestId));
     final now = FieldValue.serverTimestamp();
 
     // سجل السلفة له عقد مستقل، ولا تُضاف إليه حقول تشغيلية زائدة.

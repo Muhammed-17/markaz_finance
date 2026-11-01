@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
@@ -7,6 +10,10 @@ import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/domain/entities/envelope_entity.dart';
 import '../../../../core/domain/entities/user_entity.dart';
 import '../../../../core/errors/failures.dart';
+import '../../../../core/network/connectivity_service.dart';
+import '../../../../core/services/operation_submitter.dart';
+import '../../../../core/services/pending_operation_handlers.dart';
+import '../../../../core/services/pending_operations_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/utils/validators.dart';
@@ -34,6 +41,13 @@ class LoanFormSheet extends StatefulWidget {
 }
 
 class _LoanFormSheetState extends State<LoanFormSheet> {
+  /// يُولَّد مرة واحدة للنافذة: للمحاولة المباشرة والمسودة معًا، فإن ضاع الرد
+  /// بعد صرف ناجح لا تُصرف السلفة مرتين عند المزامنة.
+  final String _requestId = const Uuid().v4();
+  bool _handlingTransient = false;
+  bool _isOnline = true;
+  StreamSubscription<bool>? _connectivitySub;
+
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _totalAmountController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
@@ -54,12 +68,18 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
   @override
   void initState() {
     super.initState();
+    _isOnline = sl<ConnectivityService>().isOnline;
+    _connectivitySub =
+        sl<ConnectivityService>().onConnectivityChanged.listen((online) {
+      if (mounted) setState(() => _isOnline = online);
+    });
     _loadUsers();
     _loadEnvelopes();
   }
 
   @override
   void dispose() {
+    _connectivitySub?.cancel();
     _totalAmountController.dispose();
     _notesController.dispose();
     super.dispose();
@@ -135,6 +155,21 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
     final employee = _selectedUser;
     if (_envelopeId == null || employee == null) return;
 
+    if (!_isOnline) {
+      final saveDraft = await showAppConfirmDialog(
+        context,
+        title: 'حفظ كمسودة سلفة معلقة',
+        message: 'أنت غير متصل بالإنترنت. ستُحفظ السلفة كمسودة على هذا الجهاز '
+            'ولن يُخصم شيء من رصيد الظرف حتى تتوفر الشبكة وتتم المزامنة '
+            '(وقد تُرفض حينها إن لم يعد الرصيد كافيًا). هل تريد المتابعة؟',
+        confirmLabel: 'حفظ كمسودة',
+        useRootNavigator: true,
+      );
+      if (!saveDraft || !mounted) return;
+      await _saveDraft();
+      return;
+    }
+
     final confirmed = await showAppConfirmDialog(
       context,
       title: AppStrings.confirmAction,
@@ -154,12 +189,88 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
             notes: _notesController.text.trim().isEmpty
                 ? null
                 : _notesController.text.trim(),
+            requestId: _requestId,
           ),
         ));
   }
 
+  /// بيانات الصرف كما يرسلها المعالج (بدون requestId — يضيفه المرسل).
+  Map<String, dynamic> _payload(UserProfileEntity employee) => {
+        'employeeName': employee.name,
+        'employeeId': null,
+        'totalAmount': double.tryParse(_totalAmountController.text.trim()) ?? 0,
+        'envelopeId': _envelopeId,
+        'notes': _notesController.text.trim().isEmpty
+            ? null
+            : _notesController.text.trim(),
+      };
+
+  Future<void> _saveDraft() async {
+    final employee = _selectedUser;
+    if (employee == null || _envelopeId == null) return;
+    try {
+      await sl<OperationSubmitter>().saveAsDraft(
+        handler: const CreateEmployeeLoanHandler(),
+        requestId: _requestId,
+        title: 'صرف سلفة: ${employee.name} '
+            '(${_totalAmountController.text.trim()} ج.م)',
+        payload: _payload(employee),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        message: e is Failure ? e.message : 'تعذّر حفظ المسودة',
+        isError: true,
+      );
+      return;
+    }
+    if (!mounted) return;
+    showAppSnackBar(
+      context,
+      message:
+          'تم حفظ السلفة كمسودة معلقة — ستتم المزامنة تلقائيًا فور توفر الإنترنت',
+    );
+    Navigator.of(context).pop();
+  }
+
+  /// فشل مباشر بسبب الشبكة/المهلة: قد يكون الخادم صرف السلفة فعلًا وضاع الرد،
+  /// فنعرض حفظها كمسودة بنفس requestId بدل إعادة المحاولة بمعرّف جديد.
+  Future<void> _offerDraftAfterTransientFailure() async {
+    if (_handlingTransient || !mounted) return;
+    _handlingTransient = true;
+    try {
+      final confirmed = await showAppConfirmDialog(
+        context,
+        title: 'تعذّر الوصول إلى الخادم',
+        message: 'لم يصلنا رد من الخادم، وقد تكون السلفة صُرفت فعلًا. لتفادي '
+            'صرفها مرتين، ستُحفظ كمسودة معلقة بالمعرّف نفسه وتتم مزامنتها '
+            'تلقائيًا (ولن تتكرر). هل تريد المتابعة؟',
+        confirmLabel: 'حفظ كمسودة',
+        useRootNavigator: true,
+      );
+      if (!confirmed || !mounted) return;
+      await _saveDraft();
+    } finally {
+      _handlingTransient = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    return BlocListener<EmployeeLoansBloc, EmployeeLoansState>(
+      listenWhen: (previous, state) =>
+          previous.isSubmitting &&
+          state.status == EmployeeLoansStatus.operationFailure &&
+          state.lastOperation == EmployeeLoansOperation.create &&
+          state.failure != null &&
+          PendingOperationsService.isTransientFailureModel(state.failure!),
+      listener: (context, state) => _offerDraftAfterTransientFailure(),
+      child: _buildForm(context),
+    );
+  }
+
+  Widget _buildForm(BuildContext context) {
     return BlocBuilder<EmployeeLoansBloc, EmployeeLoansState>(
       builder: (context, state) {
         final isSubmitting = state.isSubmitting;

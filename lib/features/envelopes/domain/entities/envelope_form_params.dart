@@ -125,6 +125,7 @@ class TransferParams extends Equatable {
     required this.toEnvelopeId,
     required this.amount,
     this.notes,
+    this.requestId,
   });
 
   final String fromEnvelopeId;
@@ -134,14 +135,19 @@ class TransferParams extends Equatable {
   final num amount;
   final String? notes;
 
+  /// معرّف طلب فريد يولّده العميل: يجعل التحويل idempotent (إعادة الإرسال
+  /// بعد نجاح ضاع ردّه لا تحوّل المبلغ مرتين) ويُستخدم نفسه للمسودة المعلّقة.
+  final String? requestId;
+
   Map<String, dynamic> toCallableData() => {
         'fromEnvelopeId': fromEnvelopeId,
         'toEnvelopeId': toEnvelopeId,
         'amount': amount,
         'notes': notes,
+        if (requestId != null) 'requestId': requestId,
       };
 
   @override
   List<Object?> get props =>
-      [fromEnvelopeId, toEnvelopeId, amount, notes];
+      [fromEnvelopeId, toEnvelopeId, amount, notes, requestId];
 }
