@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../constants/app_colors.dart';
 import '../constants/app_dimensions.dart';
 import '../theme/app_typography.dart';
+import 'pending_operations_banner.dart';
 
 /// عنصر تنقل في الشريط الجانبي/القائمة الجانبية.
 class AppNavItem {
@@ -95,6 +96,8 @@ class _AppShellState extends State<AppShell> {
       children: [
         // شريط تحذير انقطاع الاتصال.
         if (!widget.isOnline) _OfflineBanner(),
+        // العمليات المعلقة تظهر في كل الصفحات (تختفي تلقائيًا إن لم توجد).
+        const PendingOperationsBanner(),
         Expanded(
           child: Row(
             children: [

@@ -20,7 +20,6 @@ import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_dialogs.dart';
 import '../../../../core/widgets/app_error_view.dart';
 import '../../../../core/widgets/app_loading.dart';
-import '../../../../core/widgets/pending_operations_banner.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../../domain/usecases/employee_loans_usecases.dart';
 import '../bloc/employee_loans_bloc.dart';
@@ -261,7 +260,6 @@ class _LoanDetailsBody extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(AppDimensions.pagePaddingMobile),
           children: [
-            const PendingOperationsBanner(),
             _PendingRepaymentsCard(
               loan: loan,
               canRepay: canRepay,

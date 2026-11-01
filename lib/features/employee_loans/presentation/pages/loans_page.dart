@@ -19,7 +19,6 @@ import '../../../../core/widgets/app_error_view.dart';
 import '../../../../core/widgets/app_loading.dart';
 import '../../../../core/widgets/app_stat_card.dart';
 import '../../../../core/widgets/app_text_field.dart';
-import '../../../../core/widgets/pending_operations_banner.dart';
 import '../../../../core/constants/app_strings.dart';
 import '../bloc/employee_loans_bloc.dart';
 import 'loan_form_sheet.dart';
@@ -115,7 +114,6 @@ class _LoansPageState extends State<LoansPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const PendingOperationsBanner(),
                     // شريط الأدوات
                     Row(
                       children: [

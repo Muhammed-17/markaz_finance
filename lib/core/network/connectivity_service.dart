@@ -49,7 +49,10 @@ class ConnectivityService {
     // تنعيم التغيرات السريعة (رفع/هبوط الشبكة) لتجنب وميض الواجهة.
     _recentStates.add(online);
     if (_recentStates.length > 3) _recentStates.removeAt(0);
-    final stable = _recentStates.where((s) => s == online).length >= 2 ||
+    // الانقطاع يظهر فورًا (لا يجوز إيهام المستخدم بأنه متصل)، أما العودة
+    // للاتصال فتُنعَّم لتجنب الوميض عند تذبذب الشبكة.
+    final stable = !online ||
+        _recentStates.where((s) => s == online).length >= 2 ||
         _recentStates.length < 2;
     if (!stable) return;
 

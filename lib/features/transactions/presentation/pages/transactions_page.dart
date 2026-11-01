@@ -9,8 +9,10 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/constants/app_durations.dart';
+import '../../../../core/constants/app_strings.dart';
 import '../../../../core/data/models/envelope_model.dart';
 import '../../../../core/data/models/transaction_model.dart';
+import '../../../../core/network/connectivity_service.dart';
 import '../../../../core/services/financial_operations_service.dart';
 import '../../../../core/services/operation_submitter.dart';
 import '../../../../core/services/pending_operation_handlers.dart';
@@ -18,6 +20,7 @@ import '../../../../core/services/permission_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/widgets/app_amount_text.dart';
+import '../../../../core/widgets/app_dialogs.dart';
 import '../../../../core/widgets/app_card.dart';
 import '../../../../core/widgets/app_error_view.dart';
 import '../../../../core/widgets/app_page_widgets.dart';
@@ -316,8 +319,7 @@ class _TransactionsView extends StatelessWidget {
   final ValueChanged<TransactionModel> onCancel;
 
   num _sum(Iterable<TransactionModel> items, String type) => items
-      .where((item) =>
-          item.status == AppStatuses.active && item.type == type)
+      .where((item) => item.status == AppStatuses.active && item.type == type)
       .fold<num>(0, (value, item) => value + item.amount);
 
   @override
@@ -489,7 +491,8 @@ class _SummaryTiles extends StatelessWidget {
                       children: [
                         Expanded(
                           flex: incomeFlex,
-                          child: const ColoredBox(color: AppColors.successLight),
+                          child:
+                              const ColoredBox(color: AppColors.successLight),
                         ),
                         const SizedBox(width: 2),
                         Expanded(
@@ -762,9 +765,8 @@ class _ScopeFilters extends StatefulWidget {
 
 class _ScopeFiltersState extends State<_ScopeFilters> {
   // مستمعات تُنشأ مرة واحدة (لا تُعاد عند كل إعادة بناء للصفحة).
-  late final _centersStream = FirebaseFirestore.instance
-      .collection(AppCollections.centers)
-      .snapshots();
+  late final _centersStream =
+      FirebaseFirestore.instance.collection(AppCollections.centers).snapshots();
   late final _branchesStream = FirebaseFirestore.instance
       .collection(AppCollections.branches)
       .snapshots();
@@ -792,7 +794,8 @@ class _ScopeFiltersState extends State<_ScopeFilters> {
               ..sort((a, b) => a.name.compareTo(b.name));
             final branches = (branchesSnap.data?.docs ?? const [])
                 .map(BranchModel.fromSnapshot)
-                .where((item) => center == _Filter.all || item.centerId == center)
+                .where(
+                    (item) => center == _Filter.all || item.centerId == center)
                 .toList()
               ..sort((a, b) => a.name.compareTo(b.name));
 
@@ -881,8 +884,7 @@ class _ScopeFiltersState extends State<_ScopeFilters> {
                     for (final item in envelopes)
                       DropdownMenuItem(
                         value: item.id,
-                        child:
-                            Text(item.name, overflow: TextOverflow.ellipsis),
+                        child: Text(item.name, overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: (next) {
@@ -915,14 +917,13 @@ class _DayGroup {
   final List<TransactionModel> items = [];
 
   /// صافي اليوم (الحركات النشطة فقط).
-  num get net => items
-      .where((item) => item.status == AppStatuses.active)
-      .fold<num>(
-        0,
-        (value, item) => item.type == AppTransactionTypes.income
-            ? value + item.amount
-            : value - item.amount,
-      );
+  num get net =>
+      items.where((item) => item.status == AppStatuses.active).fold<num>(
+            0,
+            (value, item) => item.type == AppTransactionTypes.income
+                ? value + item.amount
+                : value - item.amount,
+          );
 }
 
 List<_DayGroup> _groupByDay(List<TransactionModel> items) {
@@ -930,7 +931,8 @@ List<_DayGroup> _groupByDay(List<TransactionModel> items) {
   for (final item in items) {
     final d = item.createdAt;
     final key = '${d.year}-${d.month}-${d.day}';
-    groups.putIfAbsent(key, () => _DayGroup(DateTime(d.year, d.month, d.day)))
+    groups
+        .putIfAbsent(key, () => _DayGroup(DateTime(d.year, d.month, d.day)))
         .items
         .add(item);
   }
@@ -1307,7 +1309,8 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     super.dispose();
   }
 
-  static EnvelopeModel? _envelopeById(List<EnvelopeModel> envelopes, String? id) {
+  static EnvelopeModel? _envelopeById(
+      List<EnvelopeModel> envelopes, String? id) {
     for (final item in envelopes) {
       if (item.id == id) return item;
     }
@@ -1356,6 +1359,27 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
       );
       return;
     }
+
+    final isIncome = _type == AppTransactionTypes.income;
+    final amountText = AppFormatters.amount(amount);
+    final confirmed = await showAppConfirmDialog(
+      context,
+      title: sl<ConnectivityService>().isOnline
+          ? AppStrings.confirmAction
+          : 'حفظ كمسودة حركة معلقة',
+      message: sl<ConnectivityService>().isOnline
+          ? 'سيتم تسجيل ${isIncome ? 'إيراد' : 'مصروف'} بمبلغ $amountText ج.م '
+              '(${_nameController.text.trim()}) ${isIncome ? 'في' : 'من'} '
+              'الظرف «${envelope.name}»، وسيتغيّر رصيده فورًا. '
+              'هل تريد المتابعة؟'
+          : 'أنت غير متصل بالإنترنت. ستُحفظ الحركة كمسودة على هذا الجهاز '
+              'ولن يتغيّر رصيد الظرف حتى تتوفر الشبكة وتتم المزامنة '
+              '(وقد تُرفض حينها إن لم يعد الرصيد كافيًا). هل تريد المتابعة؟',
+      confirmLabel: sl<ConnectivityService>().isOnline
+          ? (isIncome ? 'تسجيل الإيراد' : 'تسجيل المصروف')
+          : 'حفظ كمسودة',
+    );
+    if (!confirmed || !mounted) return;
 
     setState(() => _saving = true);
     try {
@@ -1695,8 +1719,7 @@ class _CenterBranchFormFields extends StatelessWidget {
                     for (final item in centers)
                       DropdownMenuItem(
                         value: item.id,
-                        child:
-                            Text(item.name, overflow: TextOverflow.ellipsis),
+                        child: Text(item.name, overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: enabled
@@ -1723,8 +1746,7 @@ class _CenterBranchFormFields extends StatelessWidget {
                     for (final item in branches)
                       DropdownMenuItem(
                         value: item.id,
-                        child:
-                            Text(item.name, overflow: TextOverflow.ellipsis),
+                        child: Text(item.name, overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: enabled && hasCenter
