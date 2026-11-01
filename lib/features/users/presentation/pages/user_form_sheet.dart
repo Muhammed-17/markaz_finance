@@ -4,7 +4,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
-import '../../../../core/domain/entities/user_entity.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/validators.dart';
 import '../../../../core/widgets/app_button.dart';
@@ -49,7 +48,6 @@ class _UserFormSheetState extends State<UserFormSheet> {
   final TextEditingController _passwordController = TextEditingController();
 
   String _role = AppRoles.user;
-  FinancialPermissions _permissions = const FinancialPermissions.none();
   bool _isActive = true;
   bool _obscurePassword = true;
 
@@ -69,7 +67,6 @@ class _UserFormSheetState extends State<UserFormSheet> {
             email: _emailController.text.trim(),
             password: _passwordController.text,
             role: _role,
-            financialPermissions: _permissions.toRawMap(),
             isActive: _isActive,
           ),
         ));
@@ -169,45 +166,6 @@ class _UserFormSheetState extends State<UserFormSheet> {
                   },
                 ),
                 const SizedBox(height: AppDimensions.spacing16),
-                const Text('الصلاحيات المالية',
-                    style: AppTypography.titleMedium),
-                const Text(
-                  'تحدد ما يستطيع المستخدم فعله في الشاشات المالية',
-                  style: AppTypography.bodySmall,
-                ),
-                const SizedBox(height: AppDimensions.spacing4),
-                _buildPermissionSwitch(
-                  title: AppStrings.permissionCreate,
-                  value: _role == AppRoles.admin ? true : _permissions.create,
-                  onChanged: _role == AppRoles.admin
-                      ? null
-                      : (value) => setState(() =>
-                          _permissions = _copyWithPermissions(create: value)),
-                ),
-                _buildPermissionSwitch(
-                  title: AppStrings.permissionUpdate,
-                  value: _role == AppRoles.admin ? true : _permissions.update,
-                  onChanged: _role == AppRoles.admin
-                      ? null
-                      : (value) => setState(() =>
-                          _permissions = _copyWithPermissions(update: value)),
-                ),
-                _buildPermissionSwitch(
-                  title: AppStrings.permissionCancel,
-                  value: _role == AppRoles.admin ? true : _permissions.cancel,
-                  onChanged: _role == AppRoles.admin
-                      ? null
-                      : (value) => setState(() =>
-                          _permissions = _copyWithPermissions(cancel: value)),
-                ),
-                _buildPermissionSwitch(
-                  title: AppStrings.permissionApprove,
-                  value: _role == AppRoles.admin ? true : _permissions.approve,
-                  onChanged: _role == AppRoles.admin
-                      ? null
-                      : (value) => setState(() =>
-                          _permissions = _copyWithPermissions(approve: value)),
-                ),
                 SwitchListTile(
                   value: _isActive,
                   onChanged: (value) => setState(() => _isActive = value),
@@ -244,34 +202,6 @@ class _UserFormSheetState extends State<UserFormSheet> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildPermissionSwitch({
-    required String title,
-    required bool value,
-    required ValueChanged<bool>? onChanged,
-  }) {
-    return SwitchListTile(
-      value: value,
-      onChanged: onChanged,
-      title: Text(title),
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-    );
-  }
-
-  FinancialPermissions _copyWithPermissions({
-    bool? create,
-    bool? update,
-    bool? cancel,
-    bool? approve,
-  }) {
-    return FinancialPermissions(
-      create: create ?? _permissions.create,
-      update: update ?? _permissions.update,
-      cancel: cancel ?? _permissions.cancel,
-      approve: approve ?? _permissions.approve,
     );
   }
 }

@@ -37,20 +37,11 @@ async function setupBaseData(customSetup) {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const adminDb = context.firestore();
 
-    // مستخدم بصلاحية مالية كاملة
+    // محاسب بدور مدير (التحويل والإلغاء للمدير فقط)
     await adminDb.doc('users/user_creator').set({
       name: 'محاسب المركز',
-      role: 'user',
+      role: 'admin',
       isActive: true,
-      financialPermissions: { create: true, cancel: true, approve: false, update: false },
-    });
-
-    // مستخدم بصلاحية approve فقط
-    await adminDb.doc('users/user_approver').set({
-      name: 'مشرف القبول',
-      role: 'user',
-      isActive: true,
-      financialPermissions: { create: false, cancel: false, approve: true, update: false },
     });
 
     // مستخدم admin
@@ -58,7 +49,6 @@ async function setupBaseData(customSetup) {
       name: 'المدير',
       role: 'admin',
       isActive: true,
-      financialPermissions: { create: false, cancel: false, approve: false, update: false },
     });
 
     // مستخدم بدون صلاحية
@@ -66,7 +56,6 @@ async function setupBaseData(customSetup) {
       name: 'مستخدم عادي',
       role: 'user',
       isActive: true,
-      financialPermissions: { create: false, cancel: false, approve: false, update: false },
     });
 
     // مركز وظرفان نشطان
@@ -122,7 +111,7 @@ describe('1. حركات الأظرف الأساسية', () => {
     await assertSucceeds(batch.commit());
   });
 
-  test('فشل: مستخدم بدون صلاحية create لا ينشئ حركة مالية', async () => {
+  test('فشل: حركة منفردة غير مقترنة بتحديث رصيد ظرفها (حتى من مستخدم نشط)', async () => {
     await setupBaseData();
     const clientDb = testEnv.authenticatedContext('user_unauthorized').firestore();
 
@@ -408,28 +397,48 @@ describe('4. التحويل بين الأظرف', () => {
 // 5. صلاحيات المستخدمين والتصعيد (Role Escalation)
 // =====================================================================
 describe('5. صلاحيات المستخدمين والتصعيد', () => {
-  test('فشل: صاحب approve لا يستطيع رفع مستخدم إلى admin', async () => {
+  test('فشل: مستخدم عادي لا يستطيع رفع مستخدم إلى admin', async () => {
     await setupBaseData(async (adminDb) => {
       await adminDb.doc('users/target_user').set({
         name: 'مستخدم هدف', role: 'user', isActive: true,
         email: 'target@test.com',
-        financialPermissions: { create: false, cancel: false, approve: false, update: false },
       });
     });
-
-    const clientDb = testEnv.authenticatedContext('user_approver').firestore();
+    const clientDb = testEnv.authenticatedContext('user_unauthorized').firestore();
     await assertFails(
       clientDb.doc('users/target_user').update({ role: 'admin' })
     );
   });
 
-  test('فشل: صاحب approve لا يستطيع تعطيل مدير (isActive = false)', async () => {
-    const clientDb = testEnv.authenticatedContext('user_approver').firestore();
-    // user_admin دوره 'admin' — القاعدة تمنع تعديله من approve
+  test('فشل: مستخدم عادي لا يستطيع تعطيل مدير أو إنشاء مستخدم', async () => {
     await setupBaseData();
+    const clientDb = testEnv.authenticatedContext('user_unauthorized').firestore();
+    await assertFails(clientDb.doc('users/user_admin').update({ isActive: false }));
     await assertFails(
-      clientDb.doc('users/user_admin').update({ isActive: false })
+      clientDb.doc('users/new_user').set({
+        name: 'جديد', email: 'n@test.com', role: 'user', isActive: true,
+      })
     );
+  });
+
+  test('نجاح: أي مستخدم نشط يضيف تصنيفًا ولا يعدّله، والمدير يعدّله', async () => {
+    await setupBaseData(async (adminDb) => {
+      await adminDb.doc('categories/cat_1').set({ name: 'قديم', type: 'income', createdAt: new Date() });
+    });
+    const userDb = testEnv.authenticatedContext('user_unauthorized').firestore();
+    await assertSucceeds(
+      userDb.doc('categories/cat_new').set({ name: 'تصنيف جديد', type: 'expense', createdAt: new Date() })
+    );
+    await assertFails(userDb.doc('categories/cat_1').update({ name: 'تعديل' }));
+    const adminClient = testEnv.authenticatedContext('user_admin').firestore();
+    await assertSucceeds(adminClient.doc('categories/cat_1').update({ name: 'تعديل' }));
+  });
+
+  test('نجاح: أي مستخدم نشط يقرأ سجلات التدقيق ولا يكتب فيها', async () => {
+    await setupBaseData();
+    const userDb = testEnv.authenticatedContext('user_unauthorized').firestore();
+    await assertSucceeds(userDb.doc('transactionLogs/any').get());
+    await assertSucceeds(userDb.doc('loanLogs/any').get());
   });
 
   test('فشل: مستخدم لا يستطيع تعديل صلاحياته بنفسه', async () => {
@@ -437,7 +446,6 @@ describe('5. صلاحيات المستخدمين والتصعيد', () => {
     const clientDb = testEnv.authenticatedContext('user_unauthorized').firestore();
     await assertFails(
       clientDb.doc('users/user_unauthorized').update({
-        financialPermissions: { create: true, cancel: true, approve: true, update: true },
       })
     );
   });
@@ -447,7 +455,6 @@ describe('5. صلاحيات المستخدمين والتصعيد', () => {
       await adminDb.doc('users/target_user').set({
         name: 'مستخدم هدف', role: 'user', isActive: true,
         email: 'target@test.com',
-        financialPermissions: { create: false, cancel: false, approve: false, update: false },
       });
     });
 

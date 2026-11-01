@@ -60,13 +60,11 @@ class PendingOperationsService {
   };
 
   /// نفس التصنيف لكن على Failure القادم من الـ Bloc (مسار السداد المباشر).
-  @visibleForTesting
   static bool isTransientFailureModel(Failure failure) =>
       failure is NetworkFailure ||
       (failure is ServerFailure && _transientCodes.contains(failure.code));
 
   /// هل الخطأ عابر (شبكة/ازدحام) أم رفض نهائي من الخادم؟
-  @visibleForTesting
   static bool isTransientFailure(Object error) =>
       error is ServerException && _transientCodes.contains(error.code);
   final StreamController<List<PendingOperationModel>> _controller =
@@ -75,9 +73,11 @@ class PendingOperationsService {
   bool _isSyncing = false;
   bool get isSyncing => _isSyncing;
 
-  Box<dynamic> get _box => Hive.box<dynamic>(c.AppCollections.pendingOperationsBox);
+  Box<dynamic> get _box =>
+      Hive.box<dynamic>(c.AppCollections.pendingOperationsBox);
 
-  Stream<List<PendingOperationModel>> get operationsStream => _controller.stream;
+  Stream<List<PendingOperationModel>> get operationsStream =>
+      _controller.stream;
 
   List<PendingOperationModel> get allOperations {
     try {
@@ -86,7 +86,8 @@ class PendingOperationsService {
       for (final key in _box.keys) {
         final val = _box.get(key);
         if (val is Map) {
-          list.add(PendingOperationModel.fromMap(Map<String, dynamic>.from(val)));
+          list.add(
+              PendingOperationModel.fromMap(Map<String, dynamic>.from(val)));
         }
       }
       list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -175,7 +176,7 @@ class PendingOperationsService {
 
   /// مهلة إعادة المحاولة بعد [attempt] أعطال عابرة متتالية: 5ث، 15ث، 45ث، ...
   /// وتُقصّ عند 5 دقائق.
-  @visibleForTesting
+
   static Duration retryDelay(int attempt) {
     final seconds = _baseRetryDelay.inSeconds * pow(3, attempt).toInt();
     return Duration(
@@ -231,7 +232,8 @@ class PendingOperationsService {
       // المحفّزات التلقائية لا تعيد إرسال المرفوض نهائيًا (قد ينجح لاحقًا بعد أن
       // يكون المستخدم عدّله وأرسل بديلًا فيتكرر)؛ المزامنة اليدوية فقط تُعيد المرفوض.
       final candidates = ownOperations
-          .where((op) => includeFailed || op.status != PendingOperationStatus.failed)
+          .where((op) =>
+              includeFailed || op.status != PendingOperationStatus.failed)
           .toList();
       for (final op in candidates) {
         // نوع مجهول / إصدار غير مدعوم / بيانات ناقصة: لا تُرسل، وتبقى محفوظة مع السبب.

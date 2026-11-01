@@ -43,7 +43,7 @@ class _LoansPageState extends State<LoansPage> {
   }
 
   bool get _canCreate =>
-      PermissionService.can(_currentProfile, PermissionAction.create);
+      PermissionService.canCreateEntries(_currentProfile);
 
   @override
   void initState() {

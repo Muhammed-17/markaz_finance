@@ -70,16 +70,11 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
     return state is AuthAuthenticated ? state.profile : null;
   }
 
-  /// سجل التدقيق يظهر للمخوّلين فقط (كما في تفاصيل الحركات).
-  bool get _canViewLogs =>
-      PermissionService.canAny(
-        _currentProfile,
-        [PermissionAction.cancel, PermissionAction.approve],
-      ) ||
-      PermissionService.isAdmin(_currentProfile);
+  /// سجل التدقيق للقراءة فقط ويظهر لأي مستخدم نشط.
+  bool get _canViewLogs => PermissionService.isActive(_currentProfile);
 
-  bool get _canRepay =>
-      PermissionService.can(_currentProfile, PermissionAction.create);
+  bool _canRepayLoan(EmployeeLoanEntity? loan) =>
+      PermissionService.canRepayLoan(_currentProfile, loan?.employeeId);
 
   Future<void> _loadPayments() async {
     setState(() {
@@ -211,7 +206,7 @@ class _LoanDetailsPageState extends State<LoanDetailsPage> {
                   isLoadingLogs: _isLoadingLogs,
                   paymentsFailure: _paymentsFailure,
                   logsFailure: _logsFailure,
-                  canRepay: _canRepay,
+                  canRepay: _canRepayLoan(loan),
                   canViewLogs: _canViewLogs,
                   onRepay: () => _openRepaySheet(loan!),
                   onEditDraft: (draft) => _openRepaySheet(loan!, draft: draft),

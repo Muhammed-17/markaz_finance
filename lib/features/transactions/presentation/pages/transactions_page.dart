@@ -202,7 +202,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
         final profile =
             authState is AuthAuthenticated ? authState.profile : null;
         _syncCreateAction(
-          PermissionService.can(profile, PermissionAction.create),
+          PermissionService.canCreateEntries(profile),
         );
         if (!PermissionService.isActive(profile)) {
           return const AppErrorView(
@@ -235,8 +235,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
               newestFirst: _newestFirst,
               hasActiveFilters: _hasActiveFilters,
               cancellingId: _cancellingId,
-              canCancel:
-                  PermissionService.can(profile, PermissionAction.cancel),
+              canCancel: PermissionService.isAdmin(profile),
               visibleCount: _visibleCount,
               onLoadMore: () => setState(() => _visibleCount += _pageSize),
               onSearchChanged: () => _applyFilter(() {}),
@@ -319,7 +318,8 @@ class _TransactionsView extends StatelessWidget {
   final ValueChanged<TransactionModel> onCancel;
 
   num _sum(Iterable<TransactionModel> items, String type) => items
-      .where((item) => item.status == AppStatuses.active && item.type == type)
+      .where((item) =>
+          item.status == AppStatuses.active && item.type == type)
       .fold<num>(0, (value, item) => value + item.amount);
 
   @override
@@ -491,8 +491,7 @@ class _SummaryTiles extends StatelessWidget {
                       children: [
                         Expanded(
                           flex: incomeFlex,
-                          child:
-                              const ColoredBox(color: AppColors.successLight),
+                          child: const ColoredBox(color: AppColors.successLight),
                         ),
                         const SizedBox(width: 2),
                         Expanded(
@@ -765,8 +764,9 @@ class _ScopeFilters extends StatefulWidget {
 
 class _ScopeFiltersState extends State<_ScopeFilters> {
   // مستمعات تُنشأ مرة واحدة (لا تُعاد عند كل إعادة بناء للصفحة).
-  late final _centersStream =
-      FirebaseFirestore.instance.collection(AppCollections.centers).snapshots();
+  late final _centersStream = FirebaseFirestore.instance
+      .collection(AppCollections.centers)
+      .snapshots();
   late final _branchesStream = FirebaseFirestore.instance
       .collection(AppCollections.branches)
       .snapshots();
@@ -794,8 +794,7 @@ class _ScopeFiltersState extends State<_ScopeFilters> {
               ..sort((a, b) => a.name.compareTo(b.name));
             final branches = (branchesSnap.data?.docs ?? const [])
                 .map(BranchModel.fromSnapshot)
-                .where(
-                    (item) => center == _Filter.all || item.centerId == center)
+                .where((item) => center == _Filter.all || item.centerId == center)
                 .toList()
               ..sort((a, b) => a.name.compareTo(b.name));
 
@@ -884,7 +883,8 @@ class _ScopeFiltersState extends State<_ScopeFilters> {
                     for (final item in envelopes)
                       DropdownMenuItem(
                         value: item.id,
-                        child: Text(item.name, overflow: TextOverflow.ellipsis),
+                        child:
+                            Text(item.name, overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: (next) {
@@ -917,13 +917,14 @@ class _DayGroup {
   final List<TransactionModel> items = [];
 
   /// صافي اليوم (الحركات النشطة فقط).
-  num get net =>
-      items.where((item) => item.status == AppStatuses.active).fold<num>(
-            0,
-            (value, item) => item.type == AppTransactionTypes.income
-                ? value + item.amount
-                : value - item.amount,
-          );
+  num get net => items
+      .where((item) => item.status == AppStatuses.active)
+      .fold<num>(
+        0,
+        (value, item) => item.type == AppTransactionTypes.income
+            ? value + item.amount
+            : value - item.amount,
+      );
 }
 
 List<_DayGroup> _groupByDay(List<TransactionModel> items) {
@@ -931,8 +932,7 @@ List<_DayGroup> _groupByDay(List<TransactionModel> items) {
   for (final item in items) {
     final d = item.createdAt;
     final key = '${d.year}-${d.month}-${d.day}';
-    groups
-        .putIfAbsent(key, () => _DayGroup(DateTime(d.year, d.month, d.day)))
+    groups.putIfAbsent(key, () => _DayGroup(DateTime(d.year, d.month, d.day)))
         .items
         .add(item);
   }
@@ -1309,8 +1309,7 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     super.dispose();
   }
 
-  static EnvelopeModel? _envelopeById(
-      List<EnvelopeModel> envelopes, String? id) {
+  static EnvelopeModel? _envelopeById(List<EnvelopeModel> envelopes, String? id) {
     for (final item in envelopes) {
       if (item.id == id) return item;
     }
@@ -1719,7 +1718,8 @@ class _CenterBranchFormFields extends StatelessWidget {
                     for (final item in centers)
                       DropdownMenuItem(
                         value: item.id,
-                        child: Text(item.name, overflow: TextOverflow.ellipsis),
+                        child:
+                            Text(item.name, overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: enabled
@@ -1746,7 +1746,8 @@ class _CenterBranchFormFields extends StatelessWidget {
                     for (final item in branches)
                       DropdownMenuItem(
                         value: item.id,
-                        child: Text(item.name, overflow: TextOverflow.ellipsis),
+                        child:
+                            Text(item.name, overflow: TextOverflow.ellipsis),
                       ),
                   ],
                   onChanged: enabled && hasCenter

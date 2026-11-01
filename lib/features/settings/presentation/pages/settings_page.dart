@@ -6,7 +6,6 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_dimensions.dart';
 import '../../../../core/domain/entities/user_entity.dart';
 import '../../../../core/services/pending_operations_service.dart';
-import '../../../../core/services/permission_service.dart';
 import '../../../../core/services/app_lock_service.dart';
 import '../../../../core/services/biometric_auth_service.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -98,13 +97,6 @@ class _ProfileSection extends StatelessWidget {
   final UserProfileEntity? profile;
   final bool isOnline;
 
-  static const List<(PermissionAction, String)> _permissionLabels = [
-    (PermissionAction.create, AppStrings.permissionCreate),
-    (PermissionAction.update, AppStrings.permissionUpdate),
-    (PermissionAction.cancel, AppStrings.permissionCancel),
-    (PermissionAction.approve, AppStrings.permissionApprove),
-  ];
-
   static String _initial(String name) {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return '?';
@@ -185,72 +177,7 @@ class _ProfileSection extends StatelessWidget {
             ],
           ),
         ),
-        if (user != null) ...[
-          const SizedBox(height: AppDimensions.itemSpacing),
-          AppCard(
-            elevated: true,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const _SectionHeader(
-                  icon: Icons.verified_user_rounded,
-                  title: 'الصلاحيات المالية',
-                ),
-                if (user.isAdmin) ...[
-                  const SizedBox(height: AppDimensions.spacing8),
-                  const Text(
-                    'المدير يمتلك كل الصلاحيات ضمنيًا',
-                    style: AppTypography.bodySmall,
-                  ),
-                ],
-                const SizedBox(height: AppDimensions.spacing12),
-                ..._permissionLabels.map(
-                  (entry) => _PermissionRow(
-                    label: entry.$2,
-                    granted: PermissionService.can(user, entry.$1),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ],
-    );
-  }
-}
-
-/// صف صلاحية واحدة: أيقونة تحقق أو بلا + التسمية العربية.
-class _PermissionRow extends StatelessWidget {
-  const _PermissionRow({required this.label, required this.granted});
-
-  final String label;
-  final bool granted;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppDimensions.spacing4),
-      child: Row(
-        children: [
-          Icon(
-            granted
-                ? Icons.check_circle_rounded
-                : Icons.radio_button_unchecked_rounded,
-            size: AppDimensions.iconSmall + 2,
-            color: granted ? AppColors.success : AppColors.disabled,
-          ),
-          const SizedBox(width: AppDimensions.spacing8),
-          Expanded(
-            child: Text(
-              label,
-              style: AppTypography.bodyMedium.copyWith(
-                color:
-                    granted ? AppColors.textPrimary : AppColors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -35,17 +35,6 @@ abstract final class AppRoles {
   static const List<String> all = [admin, user];
 }
 
-/// مفاتيح الصلاحيات المالية داخل حقل financialPermissions.
-///
-/// القراءة متاحة لكل مستخدم نشط؛ لذلك لا توجد صلاحية `view` مستقلة.
-abstract final class AppPermissions {
-  static const String create = 'create';
-  static const String update = 'update';
-  static const String cancel = 'cancel';
-  static const String approve = 'approve';
-  static const List<String> all = [create, update, cancel, approve];
-}
-
 /// أنواع الحركات المالية.
 abstract final class AppTransactionTypes {
   static const String income = 'income';

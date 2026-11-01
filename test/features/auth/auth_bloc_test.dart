@@ -23,7 +23,6 @@ UserProfileEntity _profile({bool isActive = true}) => UserProfileEntity(
       name: 'محمد أحمد',
       email: 'admin@example.com',
       role: 'admin',
-      financialPermissions: const FinancialPermissions.all(),
       isActive: isActive,
     );
 
@@ -51,9 +50,7 @@ void main() {
         signOut: signOutUseCase,
       );
 
-  test('FinancialPermissions الافتراضية والكاملة تعمل', () {
-    expect(const FinancialPermissions.none().create, isFalse);
-    expect(const FinancialPermissions.all().create, isTrue);
+  test('الملف الشخصي: المدير والنشاط', () {
     expect(_profile().isAdmin, isTrue);
     expect(_profile(isActive: false).isActive, isFalse);
   });

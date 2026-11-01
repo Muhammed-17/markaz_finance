@@ -8,7 +8,6 @@ class CreateUserParams extends Equatable {
     required this.email,
     required this.password,
     required this.role,
-    required this.financialPermissions,
     required this.isActive,
   });
 
@@ -21,8 +20,6 @@ class CreateUserParams extends Equatable {
   /// 'admin' أو 'user' من AppRoles.
   final String role;
 
-  /// خريطة الصلاحيات المالية بمفاتيح AppPermissions الخمسة وقيم منطقية.
-  final Map<String, bool> financialPermissions;
   final bool isActive;
 
   /// البيانات المرسلة إلى الدالة السحابية createUser.
@@ -31,13 +28,12 @@ class CreateUserParams extends Equatable {
         'email': email,
         'password': password,
         'role': role,
-        'financialPermissions': financialPermissions,
         'isActive': isActive,
       };
 
   @override
   List<Object?> get props => [
-        name, email, role, financialPermissions, isActive,
+        name, email, role, isActive,
       ];
 }
 
@@ -50,14 +46,12 @@ class UpdateUserParams extends Equatable {
     required this.userId,
     this.name,
     this.role,
-    this.financialPermissions,
     this.isActive,
   });
 
   final String userId;
   final String? name;
   final String? role;
-  final Map<String, bool>? financialPermissions;
   final bool? isActive;
 
   /// البيانات المرسلة إلى الدالة السحابية updateUser — المفاتيح الموجودة فقط.
@@ -65,15 +59,12 @@ class UpdateUserParams extends Equatable {
     final data = <String, dynamic>{'userId': userId};
     if (name != null) data['name'] = name;
     if (role != null) data['role'] = role;
-    if (financialPermissions != null) {
-      data['financialPermissions'] = financialPermissions;
-    }
     if (isActive != null) data['isActive'] = isActive;
     return data;
   }
 
   @override
   List<Object?> get props => [
-        userId, name, role, financialPermissions, isActive,
+        userId, name, role, isActive,
       ];
 }

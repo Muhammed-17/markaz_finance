@@ -106,9 +106,5 @@ abstract final class AppStrings {
   static const String roleUser = 'مستخدم';
 
   // ================= صلاحيات =================
-  static const String permissionCreate = 'إنشاء السجلات والحركات';
-  static const String permissionUpdate = 'تعديل البيانات';
-  static const String permissionCancel = 'إلغاء الحركات';
-  static const String permissionApprove = 'اعتماد العمليات';
 
 }

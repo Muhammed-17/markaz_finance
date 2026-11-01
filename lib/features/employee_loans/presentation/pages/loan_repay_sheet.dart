@@ -25,7 +25,6 @@ import '../../../../core/widgets/app_loading.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../app/di/injection.dart';
 import '../../../../core/constants/app_strings.dart';
-import '../../../../core/errors/failures.dart';
 import '../../domain/repositories/employee_loans_repository.dart';
 import '../bloc/employee_loans_bloc.dart';
 

@@ -48,7 +48,6 @@ class UserPermissionsSheet extends StatefulWidget {
 
 class _UserPermissionsSheetState extends State<UserPermissionsSheet> {
   late String _role = widget.user.role;
-  late FinancialPermissions _permissions = widget.user.financialPermissions;
 
   bool get _isAdminRole => _role == AppRoles.admin;
 
@@ -60,10 +59,6 @@ class _UserPermissionsSheetState extends State<UserPermissionsSheet> {
           UpdateUserParams(
             userId: widget.user.id,
             role: _role,
-            // للمدير تُرسل كل الصلاحيات مفعلة (يمتلكها ضمنيًا على الخادم).
-            financialPermissions: _isAdminRole
-                ? const FinancialPermissions.all().toRawMap()
-                : _permissions.toRawMap(),
           ),
         ));
   }
@@ -88,7 +83,7 @@ class _UserPermissionsSheetState extends State<UserPermissionsSheet> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'تعديل صلاحيات: ${widget.user.name}',
+                'تغيير دور: ${widget.user.name}',
                 style: AppTypography.headlineSmall,
                 textAlign: TextAlign.center,
               ),
@@ -135,57 +130,10 @@ class _UserPermissionsSheetState extends State<UserPermissionsSheet> {
                     .toList(),
                 onChanged: (value) {
                   if (value == null || value == _role) return;
-                  setState(() {
-                    _role = value;
-                    // عند الترقية إلى مدير تُعرض كل الصلاحيات مفعلة.
-                    if (_isAdminRole) {
-                      _permissions = const FinancialPermissions.all();
-                    }
-                  });
+                  setState(() => _role = value);
                 },
               ),
               const SizedBox(height: AppDimensions.spacing16),
-
-              const Text('الصلاحيات المالية', style: AppTypography.titleMedium),
-              if (_isAdminRole)
-                const Text(
-                  'المدير يمتلك كل الصلاحيات ضمنيًا',
-                  style: AppTypography.bodySmall,
-                ),
-              const SizedBox(height: AppDimensions.spacing4),
-              _buildPermissionSwitch(
-                title: AppStrings.permissionCreate,
-                value: _isAdminRole ? true : _permissions.create,
-                onChanged: _isAdminRole
-                    ? null
-                    : (value) => setState(() =>
-                        _permissions = _copyWithPermissions(create: value)),
-              ),
-              _buildPermissionSwitch(
-                title: AppStrings.permissionUpdate,
-                value: _isAdminRole ? true : _permissions.update,
-                onChanged: _isAdminRole
-                    ? null
-                    : (value) => setState(() =>
-                        _permissions = _copyWithPermissions(update: value)),
-              ),
-              _buildPermissionSwitch(
-                title: AppStrings.permissionCancel,
-                value: _isAdminRole ? true : _permissions.cancel,
-                onChanged: _isAdminRole
-                    ? null
-                    : (value) => setState(() =>
-                        _permissions = _copyWithPermissions(cancel: value)),
-              ),
-              _buildPermissionSwitch(
-                title: AppStrings.permissionApprove,
-                value: _isAdminRole ? true : _permissions.approve,
-                onChanged: _isAdminRole
-                    ? null
-                    : (value) => setState(() =>
-                        _permissions = _copyWithPermissions(approve: value)),
-              ),
-              const SizedBox(height: AppDimensions.spacing20),
 
               BlocBuilder<UsersBloc, UsersState>(
                 builder: (context, state) {
@@ -208,34 +156,6 @@ class _UserPermissionsSheetState extends State<UserPermissionsSheet> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildPermissionSwitch({
-    required String title,
-    required bool value,
-    required ValueChanged<bool>? onChanged,
-  }) {
-    return SwitchListTile(
-      value: value,
-      onChanged: onChanged,
-      title: Text(title),
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-    );
-  }
-
-  FinancialPermissions _copyWithPermissions({
-    bool? create,
-    bool? update,
-    bool? cancel,
-    bool? approve,
-  }) {
-    return FinancialPermissions(
-      create: create ?? _permissions.create,
-      update: update ?? _permissions.update,
-      cancel: cancel ?? _permissions.cancel,
-      approve: approve ?? _permissions.approve,
     );
   }
 }

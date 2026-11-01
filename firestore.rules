@@ -59,12 +59,6 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny([key]);
     }
 
-    // الصلاحية المالية من الملف الموثوق (admin يملك الكل ضمنيًا)
-    function hasPerm(profile, action) {
-      return profile.isActive == true
-        && (profile.role == 'admin' || profile.financialPermissions[action] == true);
-    }
-
     // ملف المستدعي الموثوق — يُقرأ من users/{uid} ولا يُؤخذ من العميل
     function callerProfile() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
@@ -78,10 +72,6 @@ service cloud.firestore {
 
     function isAdmin() {
       return callerExistsAndActive() && callerProfile().role == 'admin';
-    }
-
-    function hasFinancialPerm(action) {
-      return callerExistsAndActive() && hasPerm(callerProfile(), action);
     }
 
     // إشارة حركة الظرف حسب نوعها
@@ -133,12 +123,13 @@ service cloud.firestore {
     // ================= التصنيفات المالية =================
     match /categories/{categoryId} {
       allow get, list: if callerExistsAndActive();
-      allow create: if (isAdmin() || hasFinancialPerm('approve'))
+      // إضافة تصنيف جديد متاحة لأي مستخدم نشط، والتعديل للمدير فقط.
+      allow create: if callerExistsAndActive()
         && createKeys(['name', 'type', 'createdAt'])
         && isStr(request.resource.data.name, 2, 100)
         && request.resource.data.type in ['income', 'expense']
         && request.resource.data.createdAt is timestamp;
-      allow update: if (isAdmin() || hasFinancialPerm('approve'))
+      allow update: if isAdmin()
         && onlyKeys(['name'])
         && isStr(request.resource.data.name, 2, 100);
       allow delete: if false;
@@ -163,76 +154,44 @@ service cloud.firestore {
 
     // ================= المستخدمون =================
     // القراءة: المستخدم مستنده فقط، والمدير الجميع.
-    // الإنشاء: صاحب approve ينشئ مستخدمين بدور user فقط — إنشاء admin للمدير حصرًا.
-    // التعديل: تغيير role إلى admin للمدير حصرًا — approve يستطيع تعديل role إلى user فقط.
+    // الإنشاء والتعديل للمدير حصرًا.
     // لا حذف إطلاقًا (التعطيل فقط عبر isActive).
     match /users/{userId} {
-      // القراءة: المستخدم مستنده فقط — والمدير أو صاحب صلاحية approve للجميع
-      // (شاشة إدارة المستخدمين تتطلب قراءة القائمة).
+      // القراءة: المستخدم مستنده فقط، والمدير يقرأ الجميع (وقائمة المستخدمين).
+      // الإنشاء والتعديل للمدير حصرًا.
       allow get: if signedIn()
-        && (request.auth.uid == userId || isAdmin() || hasFinancialPerm('approve'));
-      allow list: if isAdmin() || hasFinancialPerm('approve');
+        && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
 
       allow create: if (
           // فرع 1: المدير فقط ينشئ مستخدم بأي دور (بما فيها admin)
           isAdmin()
-          && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
+          && createKeys(['name', 'email', 'role', 'isActive'])
           && isStr(request.resource.data.name, 3, 200)
           && isStr(request.resource.data.email, 5, 320)
           && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
           && request.resource.data.role in ['admin', 'user']
-          && request.resource.data.financialPermissions is map
-          && request.resource.data.isActive is bool
-        ) || (
-          // فرع 2: صاحب approve ينشئ مستخدم بدور user فقط — لا يستطيع منح admin
-          hasFinancialPerm('approve')
-          && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
-          && isStr(request.resource.data.name, 3, 200)
-          && isStr(request.resource.data.email, 5, 320)
-          && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
-          && request.resource.data.role == 'user'
-          && request.resource.data.financialPermissions is map
           && request.resource.data.isActive is bool
         ) || (
           // فرع 3: طلب Google الأول: لا يستطيع صاحبه منح أي دور أو صلاحية لنفسه.
           signedIn()
           && request.auth.uid == userId
-          && createKeys(['name', 'email', 'role', 'financialPermissions', 'isActive'])
+          && createKeys(['name', 'email', 'role', 'isActive'])
           && isStr(request.resource.data.name, 1, 200)
           && isStr(request.resource.data.email, 5, 320)
           && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
           && request.resource.data.role == 'user'
-          && request.resource.data.financialPermissions.keys().hasOnly(
-              ['create', 'update', 'cancel', 'approve'])
-          && request.resource.data.financialPermissions.create == false
-          && request.resource.data.financialPermissions.update == false
-          && request.resource.data.financialPermissions.cancel == false
-          && request.resource.data.financialPermissions.approve == false
           && request.resource.data.isActive == false
         );
 
       allow update: if (
           // فرع 1: المدير يعدّل أي حقل (بما فيها تغيير الدور إلى admin)
           isAdmin()
-          && onlyKeys(['name', 'role', 'financialPermissions', 'isActive'])
+          && onlyKeys(['name', 'role', 'isActive'])
           // حماية من التصعيد: لا تعديل الذات للدور/الصلاحيات/التفعيل ((الاسم مسموح للذات فقط))
           && (request.auth.uid != userId || onlyKeys(['name']))
           && (!isKeyChanged('name') || isStr(request.resource.data.name, 3, 200))
           && (!isKeyChanged('role') || request.resource.data.role in ['admin', 'user'])
-          && (!isKeyChanged('financialPermissions')
-              || request.resource.data.financialPermissions is map)
-          && (!isKeyChanged('isActive') || request.resource.data.isActive is bool)
-        ) || (
-          // فرع 2: صاحب approve يعدّل مستخدمين عاديين فقط — لا يستطيع تعديل المدير
-          hasFinancialPerm('approve')
-          && resource.data.role == 'user'
-          && onlyKeys(['name', 'role', 'financialPermissions', 'isActive'])
-          && (request.auth.uid != userId || onlyKeys(['name']))
-          && (!isKeyChanged('name') || isStr(request.resource.data.name, 3, 200))
-          // القيد الجوهري: role لا يتغيّر إلى admin بيد غير المدير
-          && (!isKeyChanged('role') || request.resource.data.role == 'user')
-          && (!isKeyChanged('financialPermissions')
-              || request.resource.data.financialPermissions is map)
           && (!isKeyChanged('isActive') || request.resource.data.isActive is bool)
         );
 
@@ -243,7 +202,7 @@ service cloud.firestore {
     match /fundEnvelopes/{envelopeId} {
       allow get, list: if callerExistsAndActive();
 
-      allow create: if hasFinancialPerm('create')
+      allow create: if isAdmin()
         && (
           // إنشاء برصيد صفر وبدون lastEnvTxId
           (createKeys(['name', 'purpose', 'fundType', 'allowedExpenseCategories',
@@ -277,7 +236,7 @@ service cloud.firestore {
       allow update: if (
         // 1) بيانات وصفية فقط — صلاحية update
         (onlyKeys(['name', 'purpose', 'allowedExpenseCategories', 'centerId'])
-          && hasFinancialPerm('update')
+          && isAdmin()
           && isStr(request.resource.data.name, 3, 120)
           && isStr(request.resource.data.purpose, 0, 500)
           && request.resource.data.allowedExpenseCategories is list
@@ -288,7 +247,7 @@ service cloud.firestore {
         ||
         // 2) أرشفة/إعادة تنشيط — صلاحية update + لا أرشفة برصيد غير صفري
         (onlyKeys(['status'])
-          && hasFinancialPerm('update')
+          && isAdmin()
           && request.resource.data.status in ['active', 'archived']
           && (request.resource.data.status == 'active'
               || resource.data.currentBalance == 0))
@@ -296,7 +255,7 @@ service cloud.firestore {
         // 3) تحديث الرصيد — اقتران ثنائي إلزامي بحركة ظرف جديدة في نفس الدفعة
         (onlyKeys(['currentBalance', 'lastEnvTxId'])
           && request.resource.data.diff(resource.data).affectedKeys().hasAll(['currentBalance', 'lastEnvTxId'])
-          && (hasFinancialPerm('create') || hasFinancialPerm('cancel')
+          && (isAdmin()
               || (callerExistsAndActive()
                   && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.type in ['income', 'expense']
                   && getAfter(/databases/$(database)/documents/envelopeTransactions/$(request.resource.data.lastEnvTxId)).data.transactionId is string))
@@ -396,7 +355,7 @@ service cloud.firestore {
 
       // تعديل البيانات الوصفية للحركة فقط — صلاحية update.
       // المبلغ والنوع والظرف لا تتغير لأنها تؤثر في الرصيد.
-      allow update: if (hasFinancialPerm('update')
+      allow update: if (isAdmin()
           && onlyKeys(['name', 'paymentMethod', 'notes', 'updatedBy', 'updatedAt'])
           && resource.data.status == 'active'
           && request.resource.data.status == 'active'
@@ -407,7 +366,7 @@ service cloud.firestore {
           && request.resource.data.updatedBy == request.auth.uid
           && request.resource.data.updatedAt is timestamp)
         // الإلغاء: تغيير الحالة فقط — صلاحية cancel.
-        || (hasFinancialPerm('cancel')
+        || (isAdmin()
           && onlyKeys(['status', 'cancelledBy', 'updatedAt'])
           && resource.data.status == 'active'
           && request.resource.data.status == 'cancelled'
@@ -470,7 +429,7 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/envelopeTransactions/$(id[0:id.size() - 3] + '_out')).data.envelopeId != d.envelopeId);
       }
 
-      allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel')
+      allow create: if (isAdmin()
           || (callerExistsAndActive()
               && request.resource.data.type in ['income', 'expense']
               && request.resource.data.transactionId is string))
@@ -499,10 +458,12 @@ service cloud.firestore {
     // ================= سجلات تدقيق الحركات =================
     // تُنشأ ضمن المعاملة فقط، ولا تُعدل أو تُحذف أبدًا.
     match /transactionLogs/{logId} {
-      allow get, list: if hasFinancialPerm('cancel')
-        || hasFinancialPerm('approve') || isAdmin();
+      // سجلات التدقيق للقراءة فقط وتُقرأ لأي مستخدم نشط.
+      allow get, list: if callerExistsAndActive();
 
-      allow create: if (hasFinancialPerm('create') || hasFinancialPerm('cancel'))
+      // أي مستخدم نشط يسجّل سجل إنشاء لحركته؛ باقي الأنواع (تعديل/إلغاء) بصلاحيتها.
+      allow create: if (isAdmin()
+          || (callerExistsAndActive() && request.resource.data.actionType == 'CREATE'))
         && createKeys(['transactionId', 'centerId', 'actionType', 'modifiedBy',
                        'modifiedByName', 'oldValues', 'newValues', 'reason', 'timestamp'])
         && isStr(request.resource.data.transactionId, 1, 128)
@@ -534,7 +495,8 @@ service cloud.firestore {
           && getAfter(txnPath).data.amount == d.totalAmount;
       }
 
-      allow create: if hasFinancialPerm('create')
+      // إنشاء سلفة جديدة متاح لأي مستخدم نشط (السداد والتعديل بصلاحيتهما).
+      allow create: if callerExistsAndActive()
         && createKeys(['employeeId', 'employeeName', 'totalAmount',
                        'remainingBalance', 'status', 'notes', 'version',
                        'disbursementTxnId'])
@@ -550,7 +512,9 @@ service cloud.firestore {
         && loanPairedWithDisbursement(request.resource.data);
 
       // التحديث عند السداد فقط: المتبقي والحالة مقترنة بحركة سداد معتمدة
-      allow update: if hasFinancialPerm('create')
+      // السداد: مدير النظام، أو صاحب صلاحية create، أو الموظف المُسلَّف نفسه.
+      allow update: if (isAdmin()
+          || (callerExistsAndActive() && resource.data.employeeId == request.auth.uid))
         && onlyKeys(['remainingBalance', 'status', 'lastPaymentId'])
         && request.resource.data.diff(resource.data).affectedKeys().hasAll(['remainingBalance', 'status', 'lastPaymentId'])
         && resource.data.status == 'active'
@@ -585,7 +549,11 @@ service cloud.firestore {
           && getAfter(txnPath).data.amount == d.paidAmount;
       }
 
-      allow create: if hasFinancialPerm('create')
+      allow create: if (isAdmin()
+          || (callerExistsAndActive()
+              && isStr(request.resource.data.loanId, 1, 128)
+              && exists(/databases/$(database)/documents/employeeLoans/$(request.resource.data.loanId))
+              && get(/databases/$(database)/documents/employeeLoans/$(request.resource.data.loanId)).data.employeeId == request.auth.uid))
         && createKeys(['loanId', 'paidAmount', 'paymentDate',
                        'transactionId', 'requestId', 'notes'])
         && paymentId == request.resource.data.requestId
@@ -603,10 +571,15 @@ service cloud.firestore {
 
     // ================= سجلات تدقيق السلف =================
     match /loanLogs/{logId} {
-      allow get, list: if hasFinancialPerm('cancel')
-        || hasFinancialPerm('approve') || isAdmin();
+      // سجلات التدقيق للقراءة فقط وتُقرأ لأي مستخدم نشط.
+      allow get, list: if callerExistsAndActive();
 
-      allow create: if hasFinancialPerm('create')
+      allow create: if (isAdmin()
+          || (callerExistsAndActive() && request.resource.data.actionType == 'CREATE')
+          || (callerExistsAndActive()
+              && isStr(request.resource.data.loanId, 1, 128)
+              && exists(/databases/$(database)/documents/employeeLoans/$(request.resource.data.loanId))
+              && get(/databases/$(database)/documents/employeeLoans/$(request.resource.data.loanId)).data.employeeId == request.auth.uid))
         && createKeys(['loanId', 'actionType', 'performedBy', 'performedByName',
                        'oldValues', 'newValues', 'reason', 'timestamp'])
         && isStr(request.resource.data.loanId, 1, 128)

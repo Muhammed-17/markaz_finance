@@ -2,7 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
-import '../../../../core/domain/entities/user_entity.dart';
 import '../../../../core/errors/exceptions.dart';
 import '../../../../core/data/models/user_model.dart';
 import '../../../../core/network/connectivity_service.dart';
@@ -118,7 +117,6 @@ class AuthRemoteDataSource {
               : (user.email?.split('@').first ?? 'مستخدم جديد'),
           email: user.email?.trim() ?? '',
           role: 'user',
-          financialPermissions: const FinancialPermissions.none().toRawMap(),
           isActive: false,
         );
         await reference.set(profile.toMap());

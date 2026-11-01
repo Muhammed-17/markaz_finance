@@ -1,9 +1,6 @@
 import '../constants/app_constants.dart';
 import '../domain/entities/user_entity.dart';
 
-/// إجراءات الصلاحيات المالية المعتمدة.
-enum PermissionAction { create, update, cancel, approve }
-
 /// خدمة مركزية للتحقق من الصلاحيات في العميل (لعرض/إخفاء عناصر الواجهة).
 ///
 /// قاعدة أساسية: هذا الفحص لتحسين تجربة الاستخدام فقط،
@@ -19,25 +16,13 @@ class PermissionService {
   static bool isActive(UserProfileEntity? user) =>
       user != null && user.isActive;
 
-  /// التحقق من صلاحية مالية معينة للمستخدم.
-  ///
-  /// المدير يمتلك كل الصلاحيات ضمنيًا، وغيره وفق حقل financialPermissions.
-  static bool can(UserProfileEntity? user, PermissionAction action) {
-    if (user == null || !user.isActive) return false;
-    if (user.role == AppRoles.admin) return true;
-    switch (action) {
-      case PermissionAction.create:
-        return user.financialPermissions.create;
-      case PermissionAction.update:
-        return user.financialPermissions.update;
-      case PermissionAction.cancel:
-        return user.financialPermissions.cancel;
-      case PermissionAction.approve:
-        return user.financialPermissions.approve;
-    }
-  }
+  /// إضافة حركة مالية جديدة أو سلفة جديدة: متاحة لأي مستخدم نشط
+  /// (مطابق لقواعد Firestore). بقية الإجراءات (تعديل الأظرف، إلغاء الحركات،
+  /// التحويل بين الأظرف، إدارة المستخدمين) للمدير فقط.
+  static bool canCreateEntries(UserProfileEntity? user) => isActive(user);
 
-  /// أي من صلاحيتين متاحتين (اختصار للشروط المركبة).
-  static bool canAny(UserProfileEntity? user, List<PermissionAction> actions) =>
-      actions.any((a) => can(user, a));
+  /// سداد سلفة: مدير النظام، أو الموظف المُسلَّف نفسه (employeeId = uid).
+  static bool canRepayLoan(UserProfileEntity? user, String? loanEmployeeId) =>
+      isAdmin(user) ||
+      (isActive(user) && loanEmployeeId != null && loanEmployeeId == user!.id);
 }

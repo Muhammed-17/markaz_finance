@@ -47,10 +47,10 @@ class _EnvelopesPageState extends State<EnvelopesPage> {
   }
 
   bool get _canCreate =>
-      PermissionService.can(_currentProfile, PermissionAction.create);
+      PermissionService.isAdmin(_currentProfile);
 
   bool get _canUpdate =>
-      PermissionService.can(_currentProfile, PermissionAction.update);
+      PermissionService.isAdmin(_currentProfile);
 
   bool get _isAdmin => _currentProfile?.role == 'admin';
 

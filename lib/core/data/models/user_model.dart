@@ -10,7 +10,6 @@ class UserModel {
     required this.name,
     required this.email,
     required this.role,
-    required this.financialPermissions,
     required this.isActive,
   });
 
@@ -18,7 +17,6 @@ class UserModel {
   final String name;
   final String email;
   final String role;
-  final Map<String, dynamic> financialPermissions;
   final bool isActive;
 
   factory UserModel.fromMap(String id, Map<String, dynamic> map) {
@@ -27,9 +25,6 @@ class UserModel {
       name: (map['name'] ?? '') as String,
       email: (map['email'] ?? '') as String,
       role: (map['role'] ?? '') as String,
-      financialPermissions:
-          Map<String, dynamic>.from(
-              (map['financialPermissions'] as Map?) ?? <String, dynamic>{}),
       isActive: (map['isActive'] ?? true) as bool,
     );
   }
@@ -47,7 +42,6 @@ class UserModel {
         'name': name,
         'email': email,
         'role': role,
-        'financialPermissions': financialPermissions,
         'isActive': isActive,
       };
 
@@ -61,7 +55,6 @@ class UserModel {
         name: name,
         email: email,
         role: role,
-        financialPermissions: FinancialPermissions.fromMap(financialPermissions),
         isActive: isActive,
       );
 }

@@ -14,6 +14,7 @@ import '../../../../core/network/connectivity_service.dart';
 import '../../../../core/services/operation_submitter.dart';
 import '../../../../core/services/pending_operation_handlers.dart';
 import '../../../../core/services/pending_operations_service.dart';
+import '../../../../core/services/permission_service.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/utils/validators.dart';
@@ -24,6 +25,7 @@ import '../../../../core/widgets/app_loading.dart';
 import '../../../../core/widgets/app_text_field.dart';
 import '../../../../app/di/injection.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../auth/presentation/bloc/auth_bloc.dart';
 import '../../../users/domain/usecases/users_usecases.dart';
 import '../../domain/entities/loan_form_params.dart';
 import '../../domain/repositories/employee_loans_repository.dart';
@@ -87,9 +89,21 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
 
   /// قراءة حسابات المستخدمين النشطة (مستخدم عادي أو مدير نظام) لقائمة الموظفين.
   ///
-  /// قواعد Firestore تسمح بقراءة قائمة المستخدمين للمدير ولصاحب صلاحية approve
-  /// فقط؛ لغيرهما تظهر رسالة الخطأ هنا مع زر إعادة المحاولة.
+  /// مدير النظام يرى كل الحسابات؛ المستخدم العادي يرى حسابه فقط (ويُختار تلقائيًا)
+  /// — قواعد Firestore تمنع غير المدير من قراءة قائمة المستخدمين.
+  /// عند الفشل تظهر رسالة الخطأ هنا مع زر إعادة المحاولة.
   Future<void> _loadUsers() async {
+    final authState = context.read<AuthBloc>().state;
+    final me = authState is AuthAuthenticated ? authState.profile : null;
+    if (!PermissionService.isAdmin(me)) {
+      setState(() {
+        _isLoadingUsers = false;
+        _usersFailure = null;
+        _users = me == null || !me.isActive ? const [] : [me];
+        _selectedUserId = _users.isEmpty ? null : me!.id;
+      });
+      return;
+    }
     setState(() {
       _isLoadingUsers = true;
       _usersFailure = null;
@@ -183,6 +197,7 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
     context.read<EmployeeLoansBloc>().add(EmployeeLoansCreateRequested(
           CreateLoanParams(
             employeeName: employee.name,
+            employeeId: employee.id,
             totalAmount:
                 double.tryParse(_totalAmountController.text.trim()) ?? 0,
             envelopeId: _envelopeId!,
@@ -197,7 +212,7 @@ class _LoanFormSheetState extends State<LoanFormSheet> {
   /// بيانات الصرف كما يرسلها المعالج (بدون requestId — يضيفه المرسل).
   Map<String, dynamic> _payload(UserProfileEntity employee) => {
         'employeeName': employee.name,
-        'employeeId': null,
+        'employeeId': employee.id,
         'totalAmount': double.tryParse(_totalAmountController.text.trim()) ?? 0,
         'envelopeId': _envelopeId,
         'notes': _notesController.text.trim().isEmpty

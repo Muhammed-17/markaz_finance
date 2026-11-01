@@ -302,10 +302,6 @@ class _UserCard extends StatelessWidget {
           ),
           const SizedBox(height: AppDimensions.spacing12),
 
-          // شريط الصلاحيات المالية المفعلة
-          _PermissionsStrip(user: user),
-          const SizedBox(height: AppDimensions.spacing12),
-
           // الإجراءات — تعديل الدور/الصلاحيات والتعطيل مخفيان لحساب
           // المستخدم الحالي (الخادم يمنعها أيضًا).
           Row(
@@ -433,87 +429,6 @@ class _UserAvatar extends StatelessWidget {
           color: AppColors.primaryDark,
         ),
       ),
-    );
-  }
-}
-
-/// شريط صغير يعرض الصلاحيات المالية المفعلة كأيقونات مع تسميات.
-class _PermissionsStrip extends StatelessWidget {
-  const _PermissionsStrip({required this.user});
-
-  final UserProfileEntity user;
-
-  static const Map<String, (IconData, String)> _definitions = {
-    AppPermissions.create: (
-      Icons.add_circle_outline_rounded,
-      AppStrings.permissionCreate
-    ),
-    AppPermissions.update: (Icons.edit_outlined, AppStrings.permissionUpdate),
-    AppPermissions.cancel: (Icons.cancel_outlined, AppStrings.permissionCancel),
-    AppPermissions.approve: (
-      Icons.task_alt_rounded,
-      AppStrings.permissionApprove
-    ),
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    if (user.isAdmin) {
-      return const Text(
-        'يمتلك كل الصلاحيات المالية ضمنيًا بصفته مديرًا',
-        style: AppTypography.bodySmall,
-      );
-    }
-
-    final enabled = AppPermissions.all
-        .where((key) => user.financialPermissions.toRawMap()[key] == true)
-        .toList();
-
-    if (enabled.isEmpty) {
-      return Text(
-        'لا صلاحيات مالية مفعلة',
-        style: AppTypography.bodySmall.copyWith(
-          color: AppColors.textSecondary,
-        ),
-      );
-    }
-
-    return Wrap(
-      spacing: AppDimensions.spacing8,
-      runSpacing: AppDimensions.spacing8,
-      children: [
-        for (final key in enabled)
-          Tooltip(
-            message: _definitions[key]!.$2,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppDimensions.spacing8,
-                vertical: AppDimensions.spacing4,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.successLight,
-                borderRadius: BorderRadius.circular(AppDimensions.radiusSmall),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _definitions[key]!.$1,
-                    size: AppDimensions.iconSmall,
-                    color: AppColors.success,
-                  ),
-                  const SizedBox(width: AppDimensions.spacing4),
-                  Text(
-                    _definitions[key]!.$2,
-                    style: AppTypography.labelSmall.copyWith(
-                      color: AppColors.success,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
     );
   }
 }

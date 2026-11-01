@@ -62,8 +62,8 @@ class HiveService {
   /// - إن تعذّر فتح المشفَّر (مفتاح مفقود/ملف تالف) يُعاد إنشاؤه فارغًا بدل أن
   ///   يتعطل التطبيق عند الإقلاع.
   Future<void> _openEncryptedPendingBox(HiveCipher cipher) async {
-    final name = c.AppCollections.pendingOperationsBox;
-    final legacy = c.AppCollections.legacyPendingOperationsBox;
+    const name = c.AppCollections.pendingOperationsBox;
+    const legacy = c.AppCollections.legacyPendingOperationsBox;
 
     Box<dynamic> box;
     try {
