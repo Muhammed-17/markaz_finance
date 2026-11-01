@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/errors/error_text.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
@@ -172,7 +173,7 @@ class _EnvelopeFormSheetState extends State<EnvelopeFormSheet> {
                       } catch (e) {
                         setDialogState(() => adding = false);
                         messenger.showSnackBar(
-                          SnackBar(content: Text('تعذر إضافة التصنيف: $e')),
+                          SnackBar(content: Text('تعذر إضافة التصنيف: ${ErrorText.of(e)}')),
                         );
                       }
                     },

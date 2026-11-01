@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../app/di/injection.dart';
+import '../../../../core/errors/error_text.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/app_dimensions.dart';
@@ -154,7 +155,7 @@ class _TransactionsPageState extends State<TransactionsPage> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر إلغاء الحركة: $error')),
+          SnackBar(content: Text('تعذر إلغاء الحركة: ${ErrorText.of(error)}')),
         );
       }
     } finally {
@@ -1321,7 +1322,7 @@ class _CreateTransactionDialogState extends State<_CreateTransactionDialog> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر حفظ الحركة: $error')),
+          SnackBar(content: Text('تعذر حفظ الحركة: ${ErrorText.of(error)}')),
         );
       }
     } finally {
